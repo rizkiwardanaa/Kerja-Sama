@@ -1,6 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 import psycopg2
+from psycopg2.errors import DuplicateColumn
 from fpdf import FPDF
 from datetime import datetime
 import json
@@ -37,6 +38,7 @@ def init_db():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        # Buat tabel utama
         cur.execute("""
             CREATE TABLE IF NOT EXISTS dokumen_pks (
                 id SERIAL PRIMARY KEY,
@@ -47,6 +49,14 @@ def init_db():
             )
         """)
         conn.commit()
+        
+        # Tambahkan kolom form_data untuk menyimpan state jika belum ada
+        try:
+            cur.execute("ALTER TABLE dokumen_pks ADD COLUMN form_data TEXT")
+            conn.commit()
+        except DuplicateColumn:
+            conn.rollback() # Abaikan jika kolom sudah ada
+            
         cur.close()
         conn.close()
     except Exception as e:
@@ -54,50 +64,92 @@ def init_db():
 
 init_db()
 
+# --- STATE MANAGEMENT ---
 if 'pasal_json' not in st.session_state:
     st.session_state.pasal_json = {}
+if 'edit_id' not in st.session_state:
+    st.session_state.edit_id = None
+if 'edit_data' not in st.session_state:
+    st.session_state.edit_data = {}
+if 'menu_selector' not in st.session_state:
+    st.session_state.menu_selector = "📝 Buat/Edit PKS"
+
+# Fungsi helper untuk mengambil nilai default saat edit
+def get_val(key, default):
+    return st.session_state.edit_data.get(key, default)
+
+# Fungsi navigasi untuk tombol edit
+def action_edit(doc_id, form_data_str):
+    st.session_state.edit_id = doc_id
+    if form_data_str:
+        st.session_state.edit_data = json.loads(form_data_str)
+        st.session_state.pasal_json = st.session_state.edit_data.get('pasal_json', {})
+    else:
+        st.session_state.edit_data = {}
+    st.session_state.menu_selector = "📝 Buat/Edit PKS"
+
+# Fungsi untuk hapus data
+def action_delete(doc_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM dokumen_pks WHERE id = %s", (doc_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        st.sidebar.success("Dokumen berhasil dihapus!")
+    except Exception as e:
+        st.sidebar.error(f"Gagal menghapus: {e}")
 
 # --- SIDEBAR NAVIGASI ---
 st.sidebar.title("Navigasi Sistem")
-menu = st.sidebar.radio("Pilih Halaman:", ["📝 Buat PKS Baru", "📂 Riwayat Dokumen"])
+menu = st.sidebar.radio("Pilih Halaman:", ["📝 Buat/Edit PKS", "📂 Riwayat Dokumen"], key="menu_selector")
+
+if st.session_state.edit_id and menu == "📝 Buat/Edit PKS":
+    st.sidebar.warning("Sedang dalam mode Edit Dokumen.")
+    if st.sidebar.button("Batal Edit / Buat Baru"):
+        st.session_state.edit_id = None
+        st.session_state.edit_data = {}
+        st.session_state.pasal_json = {}
+        st.rerun()
 
 # =====================================================================
-# HALAMAN 1: BUAT PKS BARU
+# HALAMAN 1: BUAT / EDIT PKS
 # =====================================================================
-if menu == "📝 Buat PKS Baru":
+if menu == "📝 Buat/Edit PKS":
     st.title("Generator Naskah PKS Universitas Mulawarman")
 
     with st.expander("1. Form Data PKS", expanded=True):
         col1, col2 = st.columns(2)
         with col1:
-            logo_mitra = st.file_uploader("Unggah Logo Mitra (PNG/JPG)", type=["png", "jpg", "jpeg"])
-            judul_ks = st.text_input("Judul Kerja Sama", value="TRIDHARMA PERGURUAN TINGGI")
-            no_unit_unmul = st.text_input("Nomor Surat Pihak 1 (Unmul)")
+            logo_mitra = st.file_uploader("Unggah Logo Mitra (Harus diunggah ulang jika edit)", type=["png", "jpg", "jpeg"])
+            judul_ks = st.text_input("Judul Kerja Sama", value=get_val('judul_ks', "TRIDHARMA PERGURUAN TINGGI"))
+            no_unit_unmul = st.text_input("Nomor Surat Pihak 1 (Unmul)", value=get_val('no_unit_unmul', ""))
             
             st.markdown("**Waktu Penandatanganan**")
-            tgl_teks = st.text_input("Tanggal (Teks)", placeholder="Dua Puluh Dua")
-            bln_teks = st.text_input("Bulan (Teks)", placeholder="April")
-            thn_teks = st.text_input("Tahun (Teks)", placeholder="Dua Ribu Dua Puluh Enam")
+            tgl_teks = st.text_input("Tanggal (Teks)", value=get_val('tgl_teks', ""), placeholder="Dua Puluh Dua")
+            bln_teks = st.text_input("Bulan (Teks)", value=get_val('bln_teks', ""), placeholder="April")
+            thn_teks = st.text_input("Tahun (Teks)", value=get_val('thn_teks', ""), placeholder="Dua Ribu Dua Puluh Enam")
             
             st.subheader("Pihak 1 (Universitas Mulawarman)")
-            nama_p1 = st.text_input("Nama Pejabat P1", value="Prof. Dr. M. Bahri Arifin, M.Hum")
-            jabatan_p1 = st.text_input("Jabatan P1", value="Dekan Fakultas Ilmu Budaya")
-            lembaga_p1 = st.text_input("Nama Lembaga P1", value="Fakultas Ilmu Budaya Universitas Mulawarman")
-            alamat_p1 = st.text_area("Alamat Lembaga P1", value="Jl. Ki Hajar Dewantara, Gunung Kelua, Samarinda, Kalimantan Timur 75123")
-            nip_p1 = st.text_input("NIP P1")
+            nama_p1 = st.text_input("Nama Pejabat P1", value=get_val('nama_p1', "Prof. Dr. M. Bahri Arifin, M.Hum"))
+            jabatan_p1 = st.text_input("Jabatan P1", value=get_val('jabatan_p1', "Dekan Fakultas Ilmu Budaya"))
+            lembaga_p1 = st.text_input("Nama Lembaga P1", value=get_val('lembaga_p1', "Fakultas Ilmu Budaya Universitas Mulawarman"))
+            alamat_p1 = st.text_area("Alamat Lembaga P1", value=get_val('alamat_p1', "Jl. Ki Hajar Dewantara, Gunung Kelua, Samarinda, Kalimantan Timur 75123"))
+            nip_p1 = st.text_input("NIP P1", value=get_val('nip_p1', ""))
 
         with col2:
-            no_mitra = st.text_input("Nomor Surat Pihak 2 (Mitra)")
+            no_mitra = st.text_input("Nomor Surat Pihak 2 (Mitra)", value=get_val('no_mitra', ""))
             
             st.subheader("Pihak 2 (Mitra)")
-            nama_mitra = st.text_input("Nama Instansi Mitra", value="INSTITUT SENI INDONESIA YOGYAKARTA")
-            nama_p2 = st.text_input("Nama Pejabat P2", value="Dr. I Nyoman Cau Arsana, S.Sn., M.Hum")
-            jabatan_p2 = st.text_input("Jabatan P2", value="Dekan Fakultas Seni Pertunjukan")
-            alamat_mitra = st.text_area("Alamat Mitra", value="Jl. Parangtritis Km. 6.5 Sewon Bantul Yogyakarta")
-            nip_p2 = st.text_input("NIP P2")
+            nama_mitra = st.text_input("Nama Instansi Mitra", value=get_val('nama_mitra', "INSTITUT SENI INDONESIA YOGYAKARTA"))
+            nama_p2 = st.text_input("Nama Pejabat P2", value=get_val('nama_p2', "Dr. I Nyoman Cau Arsana, S.Sn., M.Hum"))
+            jabatan_p2 = st.text_input("Jabatan P2", value=get_val('jabatan_p2', "Dekan Fakultas Seni Pertunjukan"))
+            alamat_mitra = st.text_area("Alamat Mitra", value=get_val('alamat_mitra', "Jl. Parangtritis Km. 6.5 Sewon Bantul Yogyakarta"))
+            nip_p2 = st.text_input("NIP P2", value=get_val('nip_p2', ""))
             
             st.subheader("Detail untuk AI")
-            ruang_lingkup = st.text_area("Ruang Lingkup & Gambaran Besar", placeholder="Jelaskan detail prodi yang terlibat, teknis pelaksanaan, dan pembagian dana...")
+            ruang_lingkup = st.text_area("Ruang Lingkup & Gambaran Besar", value=get_val('ruang_lingkup', ""), placeholder="Jelaskan detail prodi yang terlibat, teknis pelaksanaan, dan pembagian dana...")
 
     teks_pembuka = f"""Pada hari ini, tanggal {tgl_teks} bulan {bln_teks}, tahun {thn_teks} yang bertanda tangan di bawah ini:
 1. {nama_p1}: {jabatan_p1} oleh karena itu sah mewakili dan bertindak untuk dan atas nama {lembaga_p1}, Universitas Mulawarman, yang berkedudukan di {alamat_p1}, selanjutnya disebut sebagai PIHAK KESATU.
@@ -112,15 +164,15 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             Judul: {judul_ks}.
             Konteks: {ruang_lingkup}
             
-            TUGAS: Keluarkan output HANYA dalam bentuk format JSON murni (tanpa markdown ```json).
+            TUGAS: Keluarkan output HANYA dalam bentuk format JSON murni.
             Gunakan struktur kunci ini:
             {{
-                "Pasal 1: Maksud dan Tujuan": "(isi pasal 1 di sini...)",
-                "Pasal 2: Ruang Lingkup Kegiatan": "(isi pasal 2 di sini...)",
-                "Pasal 3: Pelaksanaan Program": "(isi pasal 3 di sini...)",
-                "Pasal 4: Pembiayaan": "(isi pasal 4 di sini...)",
-                "Pasal 5: Jangka Waktu": "(isi pasal 5 di sini...)",
-                "Pasal 6: Penutup": "(isi pasal 6 di sini...)"
+                "Pasal 1: Maksud dan Tujuan": "(isi...)",
+                "Pasal 2: Ruang Lingkup Kegiatan": "(isi...)",
+                "Pasal 3: Pelaksanaan Program": "(isi...)",
+                "Pasal 4: Pembiayaan": "(isi...)",
+                "Pasal 5: Jangka Waktu": "(isi...)",
+                "Pasal 6: Penutup": "(isi...)"
             }}
             """
             try:
@@ -150,18 +202,39 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
         col_save, col_pdf = st.columns(2)
         
         with col_save:
-            if st.button("Simpan ke Database"):
+            btn_label = "Update Database" if st.session_state.edit_id else "Simpan ke Database"
+            if st.button(btn_label):
                 try:
+                    # Mengemas semua inputan form menjadi string JSON
+                    form_dict = {
+                        'judul_ks': judul_ks, 'no_unit_unmul': no_unit_unmul, 'tgl_teks': tgl_teks,
+                        'bln_teks': bln_teks, 'thn_teks': thn_teks, 'nama_p1': nama_p1,
+                        'jabatan_p1': jabatan_p1, 'lembaga_p1': lembaga_p1, 'alamat_p1': alamat_p1,
+                        'nip_p1': nip_p1, 'no_mitra': no_mitra, 'nama_mitra': nama_mitra,
+                        'nama_p2': nama_p2, 'jabatan_p2': jabatan_p2, 'alamat_mitra': alamat_mitra,
+                        'nip_p2': nip_p2, 'ruang_lingkup': ruang_lingkup, 'pasal_json': edited_pasal
+                    }
+                    form_data_str = json.dumps(form_dict)
+                    
                     conn = get_db_connection()
                     cur = conn.cursor()
-                    cur.execute(
-                        "INSERT INTO dokumen_pks (judul_ks, nama_mitra, tanggal_dibuat, isi_dokumen) VALUES (%s, %s, %s, %s)",
-                        (judul_ks, nama_mitra, datetime.now(), full_document)
-                    )
+                    
+                    if st.session_state.edit_id:
+                        cur.execute(
+                            "UPDATE dokumen_pks SET judul_ks=%s, nama_mitra=%s, tanggal_dibuat=%s, isi_dokumen=%s, form_data=%s WHERE id=%s",
+                            (judul_ks, nama_mitra, datetime.now(), full_document, form_data_str, st.session_state.edit_id)
+                        )
+                        st.success("Dokumen berhasil diperbarui!")
+                    else:
+                        cur.execute(
+                            "INSERT INTO dokumen_pks (judul_ks, nama_mitra, tanggal_dibuat, isi_dokumen, form_data) VALUES (%s, %s, %s, %s, %s)",
+                            (judul_ks, nama_mitra, datetime.now(), full_document, form_data_str)
+                        )
+                        st.success("Dokumen baru berhasil disimpan!")
+                        
                     conn.commit()
                     cur.close()
                     conn.close()
-                    st.success("Tersimpan ke database Neon! Buka tab 'Riwayat Dokumen' untuk melihat.")
                 except Exception as e:
                     st.error(f"Database Error: {e}")
                     
@@ -169,37 +242,37 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             if st.button("Siapkan PDF Cetak"):
                 class PDF_PKS(FPDF):
                     def footer(self):
-                        self.set_y(-25)
+                        self.set_y(-35)
                         self.set_font('Arial', '', 10)
                         
-                        # --- GAMBAR TABEL KOTAK PARAF ---
                         start_x = 25
                         col_w = 32
                         row_h = 5
                         
-                        # Baris 1: Tulisan Paraf
                         self.set_x(start_x)
                         self.cell(col_w, row_h, 'Paraf', 'LTR', 0, 'C')
                         self.cell(col_w, row_h, 'Paraf', 'LTR', 1, 'C')
                         
-                        # Baris 2: Nama Pihak
                         self.set_x(start_x)
                         self.cell(col_w, row_h, 'PIHAK KESATU', 'LBR', 0, 'C')
                         self.cell(col_w, row_h, 'PIHAK KEDUA', 'LBR', 1, 'C')
                         
-                        # Baris 3: Kotak Kosong
                         self.set_x(start_x)
                         self.cell(col_w, 10, '', 1, 0, 'C')
                         self.cell(col_w, 10, '', 1, 0, 'C')
                         
-                        # Nomor Halaman
-                        self.set_y(-15)
+                        self.set_y(-25)
                         self.cell(0, 10, f'Halaman {self.page_no()} dari {{nb}}', 0, 0, 'R')
 
                 pdf = PDF_PKS(orientation='P', unit='mm', format='A4')
                 pdf.alias_nb_pages()
                 pdf.add_page()
-                pdf.set_margins(left=25, top=10, right=25)
+                
+                # --- SOLUSI TABRAKAN PDF ---
+                # Memastikan halaman break pada margin bawah 40mm (di atas tabel paraf)
+                pdf.set_auto_page_break(auto=True, margin=40) 
+                
+                pdf.set_margins(left=25, top=20, right=25)
                 
                 # --- CETAK KOP LOGO ---
                 if os.path.exists("logo_unmul.png"):
@@ -233,12 +306,11 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 pdf.cell(0, 6, f"Nomor : {no_mitra}", 0, 1, 'C')
                 pdf.ln(10)
                 
-                # --- CETAK PEMBUKA DENGAN INDENTASI GANTUNG (HANGING INDENT) ---
+                # --- CETAK PEMBUKA (HANGING INDENT) ---
                 pdf.set_font("Arial", '', 11)
                 pdf.multi_cell(0, 6, f"Pada hari ini, tanggal {tgl_teks} bulan {bln_teks}, tahun {thn_teks} yang bertanda tangan di bawah ini:", align='J')
                 pdf.ln(3)
                 
-                # Indentasi Pihak 1
                 pdf.set_x(25)
                 pdf.cell(7, 6, "1.", 0, 0, 'L')
                 pdf.set_x(32)
@@ -246,7 +318,6 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 pdf.multi_cell(0, 6, teks_p1, align='J')
                 pdf.ln(3)
                 
-                # Indentasi Pihak 2
                 pdf.set_x(25)
                 pdf.cell(7, 6, "2.", 0, 0, 'L')
                 pdf.set_x(32)
@@ -254,7 +325,6 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 pdf.multi_cell(0, 6, teks_p2, align='J')
                 pdf.ln(3)
                 
-                # Penutup Pembuka
                 pdf.set_x(25)
                 teks_penutup = f"PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat untuk bersama-sama membuat Perjanjian Kerja Sama mengenai {judul_ks} yang dilaksanakan oleh PARA PIHAK seperti diatur dalam pasal sebagai berikut."
                 pdf.multi_cell(0, 6, teks_penutup, align='J')
@@ -268,7 +338,7 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                     pdf.multi_cell(0, 6, isi.encode('latin-1', 'replace').decode('latin-1'), align='J')
                     pdf.ln(5)
                     
-                # --- CETAK TANDA TANGAN (PERBAIKAN NIP) ---
+                # --- CETAK TANDA TANGAN ---
                 pdf.ln(10)
                 pdf.set_font("Arial", 'B', 11)
                 pdf.set_x(25)
@@ -283,8 +353,6 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 
                 pdf.set_font("Arial", '', 11)
                 pdf.set_x(25)
-                
-                # Menghilangkan titik setelah NIP
                 pdf.cell(80, 5, f'NIP {nip_p1}', 0, 0, 'L') 
                 if nip_p2:
                     pdf.cell(80, 5, f'NIP {nip_p2}', 0, 1, 'L')
@@ -296,38 +364,50 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                     st.download_button("Unduh PDF", f, file_name, mime="application/pdf", type="primary")
 
 # =====================================================================
-# HALAMAN 2: RIWAYAT DOKUMEN
+# HALAMAN 2: RIWAYAT DOKUMEN (TABEL LISTING)
 # =====================================================================
 elif menu == "📂 Riwayat Dokumen":
-    st.title("Database & Riwayat PKS")
-    st.write("Akses, tinjau, dan salin draf PKS yang pernah Anda buat sebelumnya.")
+    st.title("Riwayat Dokumen PKS")
+    st.write("Daftar naskah yang telah disimpan. Klik Edit untuk mengubah dan mengunduh ulang PDF.")
     
     try:
         conn = get_db_connection()
-        query = "SELECT id, judul_ks, nama_mitra, tanggal_dibuat, isi_dokumen FROM dokumen_pks ORDER BY tanggal_dibuat DESC"
-        df = pd.read_sql(query, conn)
+        # Ambil juga form_data dari database
+        query = "SELECT id, judul_ks, nama_mitra, tanggal_dibuat, form_data FROM dokumen_pks ORDER BY tanggal_dibuat DESC"
+        cur = conn.cursor()
+        cur.execute(query)
+        rows = cur.fetchall()
+        cur.close()
         conn.close()
         
-        if not df.empty:
-            # Mengubah format tanggal agar mudah dibaca
-            df['tanggal_dibuat'] = pd.to_datetime(df['tanggal_dibuat']).dt.strftime('%d-%m-%Y %H:%M')
+        if rows:
+            # Header Tabel Kustom menggunakan Streamlit Columns
+            head_col1, head_col2, head_col3, head_col4 = st.columns([2, 3, 3, 2])
+            head_col1.markdown("**Tanggal**")
+            head_col2.markdown("**Mitra**")
+            head_col3.markdown("**Judul**")
+            head_col4.markdown("**Aksi**")
             
-            # Pilihan dokumen menggunakan selectbox
-            dokumen_pilihan = st.selectbox(
-                "Pilih Dokumen:", 
-                options=df['id'].tolist(),
-                format_func=lambda x: f"{df[df['id']==x]['tanggal_dibuat'].values[0]} | {df[df['id']==x]['nama_mitra'].values[0]} - {df[df['id']==x]['judul_ks'].values[0]}"
-            )
+            st.divider()
             
-            # Tampilkan data yang dipilih
-            if dokumen_pilihan:
-                data_terpilih = df[df['id'] == dokumen_pilihan].iloc[0]
-                st.subheader(f"Draf: {data_terpilih['nama_mitra']}")
+            # Melakukan iterasi per baris data
+            for row in rows:
+                doc_id, jdl, mitra, tgl, form_data = row
                 
-                # Tampilkan di Text Area agar user bisa mencopy/mengedit
-                teks_tersimpan = st.text_area("Isi Dokumen (Bisa disalin atau diedit untuk draf baru):", value=data_terpilih['isi_dokumen'], height=600)
+                col1, col2, col3, col_edit, col_del = st.columns([2, 3, 3, 1, 1])
+                col1.write(tgl.strftime('%d-%m-%Y %H:%M'))
+                col2.write(mitra)
+                col3.write(jdl)
                 
-                st.info("💡 Catatan: Untuk mencetak ulang PDF dengan kop dan layout tabel yang presisi, salin teks ini dan gunakan menu 'Buat PKS Baru'. Database menyimpan data dalam format plain-text.")
+                if col_edit.button("✏️ Edit", key=f"edit_{doc_id}"):
+                    action_edit(doc_id, form_data)
+                    st.rerun() # Langsung alihkan ke halaman editor
+                    
+                if col_del.button("🗑️ Hapus", key=f"del_{doc_id}"):
+                    action_delete(doc_id)
+                    st.rerun() # Refresh tabel setelah dihapus
+                    
+            st.divider()
         else:
             st.warning("Belum ada dokumen PKS yang tersimpan di database.")
             
