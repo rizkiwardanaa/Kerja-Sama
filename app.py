@@ -169,7 +169,7 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             if st.button("Siapkan PDF Cetak"):
                 class PDF_PKS(FPDF):
                     def footer(self):
-                        self.set_y(-15)
+                        self.set_y(-25)
                         self.set_font('Arial', '', 10)
                         
                         # --- GAMBAR TABEL KOTAK PARAF ---
@@ -193,7 +193,7 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                         self.cell(col_w, 10, '', 1, 0, 'C')
                         
                         # Nomor Halaman
-                        self.set_y(-25)
+                        self.set_y(-15)
                         self.cell(0, 10, f'Halaman {self.page_no()} dari {{nb}}', 0, 0, 'R')
 
                 pdf = PDF_PKS(orientation='P', unit='mm', format='A4')
