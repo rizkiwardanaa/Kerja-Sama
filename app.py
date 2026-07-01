@@ -4,6 +4,8 @@ import psycopg2
 from fpdf import FPDF
 from datetime import datetime
 import json
+import os
+import tempfile
 
 st.set_page_config(page_title="Generator PKS Unmul", layout="wide")
 
@@ -63,7 +65,10 @@ with st.expander("1. Form Data PKS", expanded=True):
     col1, col2 = st.columns(2)
     
     with col1:
+        logo_mitra = st.file_uploader("Unggah Logo Mitra (PNG/JPG)", type=["png", "jpg", "jpeg"])
         judul_ks = st.text_input("Judul Kerja Sama", value="TRIDHARMA PERGURUAN TINGGI")
+        no_unit_unmul = st.text_input("Nomor Surat Pihak 1 (Unmul)")
+        
         st.markdown("**Waktu Penandatanganan**")
         tgl_teks = st.text_input("Tanggal (Teks)", placeholder="Dua Puluh Dua")
         bln_teks = st.text_input("Bulan (Teks)", placeholder="April")
@@ -77,6 +82,8 @@ with st.expander("1. Form Data PKS", expanded=True):
         nip_p1 = st.text_input("NIP P1")
 
     with col2:
+        no_mitra = st.text_input("Nomor Surat Pihak 2 (Mitra)")
+        
         st.subheader("Pihak 2 (Mitra)")
         nama_mitra = st.text_input("Nama Instansi Mitra", value="INSTITUT SENI INDONESIA YOGYAKARTA")
         nama_p2 = st.text_input("Nama Pejabat P2", value="Dr. I Nyoman Cau Arsana, S.Sn., M.Hum")
@@ -88,7 +95,6 @@ with st.expander("1. Form Data PKS", expanded=True):
         ruang_lingkup = st.text_area("Ruang Lingkup & Gambaran Besar", placeholder="Jelaskan detail prodi yang terlibat, teknis pelaksanaan, dan pembagian dana...")
 
 # --- TEMPLATE PEMBUKA BAKU ---
-# Format ini dikunci persis sesuai template FIB Unmul
 teks_pembuka = f"""Pada hari ini, tanggal {tgl_teks} bulan {bln_teks}, tahun {thn_teks} yang bertanda tangan di bawah ini:
 1. {nama_p1}: {jabatan_p1} oleh karena itu sah mewakili dan bertindak untuk dan atas nama {lembaga_p1}, Universitas Mulawarman, yang berkedudukan di {alamat_p1}, selanjutnya disebut sebagai PIHAK KESATU.
 2. {nama_p2}: {jabatan_p2} oleh karena itu sah mewakili dan bertindak untuk dan atas nama {nama_mitra}, yang berkedudukan di {alamat_mitra}, selanjutnya disebut sebagai PIHAK KEDUA.
@@ -116,7 +122,6 @@ if st.button("Generate Pasal AI", type="primary"):
         """
         try:
             response = model.generate_content(prompt)
-            # Membersihkan output AI jika masih ada sisa markdown
             raw_json = response.text.replace('```json', '').replace('```', '').strip()
             st.session_state.pasal_json = json.loads(raw_json)
             st.success("Berhasil! Silakan edit tiap pasal di bawah.")
@@ -128,17 +133,14 @@ if st.session_state.pasal_json:
     st.markdown("---")
     st.subheader("2. Draft PKS (Editor Terpisah)")
     
-    # Menampilkan bagian pembuka (Read-only / panduan)
     st.info("Bagian Pembuka (Komparisi) otomatis dikunci sesuai template baku:")
     st.write(teks_pembuka)
     
     st.markdown("### Edit Pasal-Pasal:")
     edited_pasal = {}
-    # Looping dictionary untuk membuat banyak st.text_area
     for judul_pasal, isi_pasal in st.session_state.pasal_json.items():
         edited_pasal[judul_pasal] = st.text_area(judul_pasal, value=isi_pasal, height=150)
     
-    # Menyatukan kembali teks penuh untuk PDF dan DB
     full_document = teks_pembuka + "\n\n"
     for jdl, isi in edited_pasal.items():
         full_document += f"{jdl}\n{isi}\n\n"
@@ -167,22 +169,56 @@ if st.session_state.pasal_json:
                 def footer(self):
                     self.set_y(-25)
                     self.set_font('Arial', 'I', 8)
-                    self.set_x(20)
+                    self.set_x(25)
                     self.cell(40, 5, 'Paraf PIHAK KESATU ...............', 0, 0, 'L')
-                    self.set_x(120)
-                    self.cell(40, 5, 'Paraf PIHAK KEDUA ...............', 0, 1, 'L')
+                    self.set_x(145)
+                    self.cell(40, 5, 'Paraf PIHAK KEDUA ...............', 0, 1, 'R')
                     self.cell(0, 5, f'Halaman {self.page_no()}', 0, 0, 'R')
 
             pdf = PDF_PKS(orientation='P', unit='mm', format='A4')
             pdf.add_page()
-            pdf.set_margins(left=25, top=25, right=25)
+            pdf.set_margins(left=25, top=20, right=25)
             
-            # CETAK PEMBUKA
+            # --- 1. CETAK KOP LOGO ---
+            if os.path.exists("logo_unmul.png"):
+                pdf.image("logo_unmul.png", x=25, y=20, w=30)
+            
+            if logo_mitra is not None:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
+                    tmp_file.write(logo_mitra.read())
+                    tmp_path = tmp_file.name
+                pdf.image(tmp_path, x=155, y=20, w=30)
+            
+            # --- 2. CETAK BLOK JUDUL ---
+            pdf.set_y(55)
+            pdf.set_font("Arial", 'B', 12)
+            
+            pdf.cell(0, 6, "PERJANJIAN KERJA SAMA", 0, 1, 'C')
+            pdf.cell(0, 6, "ANTARA", 0, 1, 'C')
+            pdf.cell(0, 6, lembaga_p1.upper(), 0, 1, 'C')
+            pdf.cell(0, 6, "UNIVERSITAS MULAWARMAN", 0, 1, 'C')
+            pdf.cell(0, 6, "DENGAN", 0, 1, 'C')
+            if nama_mitra:
+                pdf.cell(0, 6, nama_mitra.upper(), 0, 1, 'C')
+            
+            pdf.ln(5)
+            pdf.cell(0, 6, "TENTANG", 0, 1, 'C')
+            if judul_ks:
+                pdf.cell(0, 6, judul_ks.upper(), 0, 1, 'C')
+            
+            pdf.ln(5)
+            pdf.set_font("Arial", '', 12)
+            pdf.cell(0, 6, f"Nomor : {no_unit_unmul}", 0, 1, 'C')
+            pdf.cell(0, 6, f"Nomor : {no_mitra}", 0, 1, 'C')
+            
+            pdf.ln(10)
+            
+            # --- 3. CETAK PEMBUKA ---
             pdf.set_font("Arial", '', 11)
             pdf.multi_cell(0, 6, teks_pembuka.encode('latin-1', 'replace').decode('latin-1'), align='J')
             pdf.ln(5)
             
-            # CETAK PASAL-PASAL
+            # --- 4. CETAK PASAL-PASAL ---
             for jdl, isi in edited_pasal.items():
                 pdf.set_font("Arial", 'B', 11)
                 pdf.multi_cell(0, 6, jdl.upper(), align='C')
@@ -190,7 +226,7 @@ if st.session_state.pasal_json:
                 pdf.multi_cell(0, 6, isi.encode('latin-1', 'replace').decode('latin-1'), align='J')
                 pdf.ln(5)
                 
-            # CETAK TANDA TANGAN
+            # --- 5. CETAK TANDA TANGAN ---
             pdf.ln(10)
             pdf.set_font("Arial", 'B', 11)
             pdf.set_x(25)
