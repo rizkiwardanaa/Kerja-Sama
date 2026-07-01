@@ -182,16 +182,100 @@ if st.session_state.draft_pks:
                     st.error(f"Gagal menyimpan ke database: {e}")
                 
     with col_pdf:
-        if st.button("Siapkan PDF"):
+        if st.button("Siapkan PDF", type="primary"):
             try:
-                pdf = FPDF()
+                # Membuat Class Custom FPDF untuk menyesuaikan Template Unmul
+                class PDF_PKS(FPDF):
+                    def header(self):
+                        # Asumsi ada logo Unmul di folder yang sama bernama 'logo_unmul.png'
+                        # self.image('logo_unmul.png', 10, 8, 25) 
+                        self.set_font('Arial', 'B', 12)
+                        # Memberi jarak agar teks tidak menabrak logo
+                        self.cell(0, 10, '', 0, 1) 
+                        
+                    def footer(self):
+                        # Posisi 3 cm dari bawah
+                        self.set_y(-30)
+                        self.set_font('Arial', 'I', 8)
+                        
+                        # Bagian Paraf di Footer
+                        self.set_x(15)
+                        self.cell(40, 5, 'Paraf PIHAK KESATU', 0, 0, 'L')
+                        self.set_x(150)
+                        self.cell(40, 5, 'Paraf PIHAK KEDUA', 0, 1, 'L')
+                        
+                        self.set_x(15)
+                        self.cell(40, 5, '......................', 0, 0, 'L')
+                        self.set_x(150)
+                        self.cell(40, 5, '......................', 0, 1, 'L')
+                        
+                        # Nomor Halaman
+                        self.cell(0, 10, f'Halaman {self.page_no()} dari {{nb}}', 0, 0, 'R')
+
+                # Inisialisasi PDF
+                pdf = PDF_PKS(orientation='P', unit='mm', format='A4')
+                pdf.alias_nb_pages()
                 pdf.add_page()
-                pdf.set_font("Arial", size=11)
+                pdf.set_margins(left=20, top=20, right=20)
+                pdf.set_auto_page_break(auto=True, margin=35)
                 
-                # Encode ke latin-1 untuk menghindari error karakter saat build PDF
+                # Membersihkan teks dari karakter yang tidak didukung FPDF (Latin-1)
                 teks_bersih = edited_draft.encode('latin-1', 'replace').decode('latin-1')
-                pdf.multi_cell(0, 5, teks_bersih)
                 
+                # Memisahkan teks berdasarkan baris baru untuk mengatur alignment per paragraf
+                baris_teks = teks_bersih.split('\n')
+                
+                for baris in baris_teks:
+                    baris = baris.strip()
+                    if not baris:
+                        pdf.ln(3) # Spasi antar paragraf
+                        continue
+                        
+                    # Deteksi Judul Utama agar di-Center dan Bold
+                    if "PERJANJIAN KERJA SAMA" in baris or "ANTARA" in baris or "DENGAN" in baris or "TENTANG" in baris or baris.startswith("Nomor:"):
+                        pdf.set_font("Arial", 'B', 12)
+                        pdf.multi_cell(0, 6, baris, align='C')
+                    
+                    # Deteksi Pasal agar di-Center dan Bold
+                    elif baris.lower().startswith("pasal"):
+                        pdf.ln(5)
+                        pdf.set_font("Arial", 'B', 11)
+                        pdf.multi_cell(0, 6, baris, align='C')
+                    
+                    # Deteksi Bagian Tanda Tangan (Biasanya ada kata PIHAK KESATU di akhir dokumen)
+                    elif "PIHAK KESATU," in baris or "PIHAK KEDUA," in baris:
+                        pdf.ln(15) # Jarak sebelum tanda tangan
+                        pdf.set_font("Arial", 'B', 11)
+                        # Membuat dua kolom untuk tanda tangan
+                        pdf.set_x(20)
+                        pdf.cell(85, 5, 'PIHAK KESATU,', 0, 0, 'L')
+                        pdf.cell(85, 5, 'PIHAK KEDUA,', 0, 1, 'L')
+                        
+                        pdf.ln(25) # Ruang untuk tanda tangan basah
+                        
+                        # Menulis Nama Pejabat
+                        pdf.set_font("Arial", 'U', 11) # Underline untuk nama
+                        pdf.set_x(20)
+                        pdf.cell(85, 5, nama_p1, 0, 0, 'L')
+                        pdf.cell(85, 5, nama_p2, 0, 1, 'L')
+                        
+                        # Menulis NIP
+                        pdf.set_font("Arial", '', 11)
+                        pdf.set_x(20)
+                        pdf.cell(85, 5, f'NIP. {nip_p1}', 0, 0, 'L')
+                        if nip_p2:
+                            pdf.cell(85, 5, f'NIP. {nip_p2}', 0, 1, 'L')
+                        else:
+                            pdf.ln(5)
+                        
+                        break # Hentikan iterasi karena bagian tanda tangan adalah penutup
+                        
+                    # Teks Body biasa (Justify)
+                    else:
+                        pdf.set_font("Arial", '', 11)
+                        pdf.multi_cell(0, 6, baris, align='J')
+
+                # Output File
                 file_name = f"PKS_{nama_mitra.replace(' ', '_')}.pdf" if nama_mitra else "PKS_Draft.pdf"
                 pdf.output(file_name)
                 
