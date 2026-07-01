@@ -126,7 +126,6 @@ if st.session_state.edit_id and menu == "📝 Buat/Edit PKS":
 if menu == "📝 Buat/Edit PKS":
     st.title("Generator Naskah PKS Universitas Mulawarman")
 
-    # BUNGKUS SELURUH INPUT DALAM ST.FORM AGAR TIDAK LOADING SAAT MENGETIK
     with st.form("main_pks_form"):
         with st.expander("1. Form Data PKS", expanded=True):
             col1, col2 = st.columns(2)
@@ -158,6 +157,7 @@ if menu == "📝 Buat/Edit PKS":
                 nip_p2 = st.text_input("NIP P2", value=get_val('nip_p2', ""))
                 
                 st.subheader("Detail untuk AI")
+                tgl_berakhir = st.text_input("Tanggal Berakhir Kerja Sama", value=get_val('tgl_berakhir', "Dua Puluh Dua April Dua Ribu Tiga Puluh"))
                 ruang_lingkup = st.text_area("Ruang Lingkup & Gambaran Besar", value=get_val('ruang_lingkup', ""), placeholder="Jelaskan detail prodi yang terlibat, teknis pelaksanaan, dan pembagian dana...")
 
         teks_pembuka = f"""Pada hari ini, tanggal {tgl_teks} bulan {bln_teks}, tahun {thn_teks} yang bertanda tangan di bawah ini:
@@ -166,14 +166,12 @@ if menu == "📝 Buat/Edit PKS":
 
 PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat untuk bersama-sama membuat Perjanjian Kerja Sama mengenai {judul_ks} yang dilaksanakan oleh PARA PIHAK seperti diatur dalam pasal sebagai berikut."""
 
-        # Tombol submit khusus untuk Generate AI
         btn_generate = st.form_submit_button("Generate Pasal AI", type="primary")
         
         edited_pasal = {}
         btn_save = False
         btn_pdf = False
         
-        # Area Editor (juga berada di dalam Form yang sama)
         if st.session_state.pasal_json:
             st.markdown("---")
             st.subheader("2. Draft PKS (Editor Terpisah)")
@@ -192,12 +190,9 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 btn_pdf = st.form_submit_button("Siapkan PDF Cetak")
 
     # =====================================================================
-    # LOGIKA PEMROSESAN (HANYA BERJALAN SAAT TOMBOL DITEKAN)
+    # LOGIKA PEMROSESAN
     # =====================================================================
-    
-    # 1. Sinkronisasi Data agar aman saat layar termuat ulang
     if btn_generate or btn_save or btn_pdf:
-        # Mengunci hasil editan manual ke state agar tidak tertimpa AI lama
         if edited_pasal:
             st.session_state.pasal_json = edited_pasal
             
@@ -207,16 +202,18 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             'jabatan_p1': jabatan_p1, 'lembaga_p1': lembaga_p1, 'alamat_p1': alamat_p1,
             'nip_p1': nip_p1, 'no_mitra': no_mitra, 'nama_mitra': nama_mitra,
             'nama_p2': nama_p2, 'jabatan_p2': jabatan_p2, 'alamat_mitra': alamat_mitra,
-            'nip_p2': nip_p2, 'ruang_lingkup': ruang_lingkup, 'pasal_json': edited_pasal if edited_pasal else {}
+            'nip_p2': nip_p2, 'tgl_berakhir': tgl_berakhir, 'ruang_lingkup': ruang_lingkup, 
+            'pasal_json': edited_pasal if edited_pasal else {}
         }
     
-    # 2. Proses Generate AI
     if btn_generate:
         with st.spinner("Gemini sedang memikirkan pasal-pasal..."):
             prompt = f"""
             Anda adalah asisten legal tata naskah. Susun isi pasal-pasal untuk Perjanjian Kerja Sama (PKS).
             Judul: {judul_ks}.
-            Konteks: {ruang_lingkup}
+            Konteks/Ruang Lingkup: {ruang_lingkup}
+            Tanggal Berakhir Kerja Sama: {tgl_berakhir}
+            
             TUGAS: Keluarkan output HANYA dalam bentuk format JSON murni.
             Gunakan struktur kunci ini:
             {{
@@ -224,7 +221,7 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 "Pasal 2: Ruang Lingkup Kegiatan": "(isi...)",
                 "Pasal 3: Pelaksanaan Program": "(isi...)",
                 "Pasal 4: Pembiayaan": "(isi...)",
-                "Pasal 5: Jangka Waktu": "(isi...)",
+                "Pasal 5: Jangka Waktu": "(Sebutkan durasi kerja sama dan sebutkan tanggal berakhirnya {tgl_berakhir}...)",
                 "Pasal 6: Penutup": "(isi...)"
             }}
             """
@@ -233,11 +230,10 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 raw_json = response.text.replace('```json', '').replace('```', '').strip()
                 st.session_state.pasal_json = json.loads(raw_json)
                 st.session_state.pdf_ready = False
-                st.rerun() # Refresh untuk memunculkan kotak editor
+                st.rerun() 
             except Exception as e:
                 st.error(f"Gagal memproses AI. Error: {e}")
 
-    # 3. Proses Simpan / Update Database
     if btn_save:
         try:
             full_document = teks_pembuka + "\n\n"
@@ -259,7 +255,7 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                     "INSERT INTO dokumen_pks (judul_ks, nama_mitra, tanggal_dibuat, isi_dokumen, form_data) VALUES (%s, %s, %s, %s, %s) RETURNING id",
                     (judul_ks, nama_mitra, datetime.now(), full_document, form_data_str)
                 )
-                st.session_state.edit_id = cur.fetchone()[0] # Otomatis beralih ke mode edit setelah insert
+                st.session_state.edit_id = cur.fetchone()[0]
                 st.success("Dokumen baru berhasil disimpan!")
                 
             conn.commit()
@@ -268,7 +264,6 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
         except Exception as e:
             st.error(f"Database Error: {e}")
 
-    # 4. Proses Siapkan PDF Cetak
     if btn_pdf:
         try:
             class PDF_PKS(FPDF):
@@ -355,13 +350,23 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             pdf.multi_cell(0, 6, teks_penutup, align='J')
             pdf.ln(5)
             
+            # --- CETAK PASAL-PASAL (PERBAIKAN STRUKTUR JUDUL) ---
             for jdl, isi in st.session_state.pasal_json.items():
                 pdf.set_font("Arial", 'B', 11)
-                pdf.multi_cell(0, 6, jdl.upper(), align='C')
+                
+                # Cek jika judul mengandung titik dua (:) untuk dipecah ke baris baru
+                if ":" in jdl:
+                    pasal_num, pasal_title = jdl.split(":", 1)
+                    pdf.multi_cell(0, 6, pasal_num.strip().upper(), align='C')
+                    pdf.multi_cell(0, 6, pasal_title.strip().upper(), align='C')
+                else:
+                    pdf.multi_cell(0, 6, jdl.upper(), align='C')
+                
                 pdf.set_font("Arial", '', 11)
                 pdf.multi_cell(0, 6, isi.encode('latin-1', 'replace').decode('latin-1'), align='J')
                 pdf.ln(5)
                 
+            # --- CETAK TANDA TANGAN ---
             pdf.ln(10)
             pdf.set_font("Arial", 'B', 11)
             pdf.set_x(25)
@@ -369,14 +374,15 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             pdf.cell(80, 5, 'PIHAK KEDUA,', 0, 1, 'L')
             pdf.ln(25)
             
-            pdf.set_font("Arial", 'U', 11)
+            # Hilangkan garis bawah ('U') pada nama pejabat
+            pdf.set_font("Arial", '', 11) 
             pdf.set_x(25)
             pdf.cell(80, 5, nama_p1, 0, 0, 'L')
             pdf.cell(80, 5, nama_p2, 0, 1, 'L')
             
-            pdf.set_font("Arial", '', 11)
+            # Ubah font NIP menjadi tebal ('B')
+            pdf.set_font("Arial", 'B', 11) 
             pdf.set_x(25)
-            
             pdf.cell(80, 5, f'NIP {nip_p1}', 0, 0, 'L') 
             if nip_p2:
                 pdf.cell(80, 5, f'NIP {nip_p2}', 0, 1, 'L')
@@ -389,7 +395,6 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
         except Exception as e:
             st.error(f"Gagal menyiapkan PDF: {e}")
 
-    # Menampilkan tombol unduh di luar form (Wajib aturan Streamlit)
     if st.session_state.pdf_ready:
         if os.path.exists("Draft_PKS_Cetak.pdf"):
             with open("Draft_PKS_Cetak.pdf", "rb") as f:
@@ -432,6 +437,7 @@ elif menu == "📂 Riwayat Dokumen":
                     
                 if col_del.button("🗑️ Hapus", key=f"del_{doc_id}"):
                     action_delete(doc_id)
+                    st.rerun()
                     
             st.divider()
         else:
