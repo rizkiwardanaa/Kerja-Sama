@@ -178,7 +178,7 @@ if menu == "📝 Buat/Edit PKS":
                 nip_p2 = st.text_input("NIP P2", value=get_val('nip_p2', ""))
                 
                 st.subheader("Detail untuk AI")
-                tgl_berakhir = st.date_input("Pilih Tanggal Penandatanganan", value=get_val(tgl_berakhir))
+                tgl_berakhir = st.date_input("Pilih Tanggal Penandatanganan", value=get_val('tgl_berakhir', ""))
                 ruang_lingkup = st.text_area("Ruang Lingkup & Gambaran Besar", value=get_val('ruang_lingkup', ""), placeholder="Jelaskan detail prodi yang terlibat, teknis pelaksanaan, dan pembagian dana...")
 
         narasi_tanggal = get_tanggal_naratif(tgl_ttd)
