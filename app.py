@@ -4,16 +4,71 @@ import psycopg2
 from fpdf import FPDF
 from datetime import datetime
 
-# --- KONFIGURASI SECRETS ---
-# Mengambil API Key Gemini dan model
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-model = genai.GenerativeModel('gemini-1.5-flash')
+# --- KONFIGURASI HALAMAN ---
+st.set_page_config(page_title="Generator PKS Unmul", layout="wide")
 
-# Mengambil Connection String Neon DB
+# --- KONFIGURASI SECRETS ---
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+except KeyError:
+    st.error("API Key Gemini tidak ditemukan di st.secrets. Pastikan rahasia telah diatur di Streamlit Cloud.")
+    st.stop()
+
+# --- KONEKSI DATABASE NEON ---
 def get_db_connection():
-    # Gunakan connection string langsung dari rahasia Streamlit
-    conn = psycopg2.connect(st.secrets["NEON_CONNECTION_STRING"])
-    return conn
+    try:
+        conn = psycopg2.connect(st.secrets["NEON_CONNECTION_STRING"])
+        return conn
+    except Exception as e:
+        st.error(f"Gagal terhubung ke database: {e}")
+        return None
+
+# --- LOGIKA PEMILIHAN MODEL DINAMIS ---
+@st.cache_resource
+def load_best_gemini_model():
+    """
+    Mencari model Gemini terbaik yang tersedia di API Key pengguna.
+    Hasilnya di-cache oleh Streamlit agar tidak perlu mengecek API berulang kali.
+    """
+    try:
+        available_models = [
+            m.name for m in genai.list_models() 
+            if 'generateContent' in m.supported_generation_methods
+        ]
+        
+        if not available_models:
+            return None, "Tidak ada model teks yang tersedia di API Key ini."
+
+        priority_models = [
+            'models/gemini-1.5-flash-latest',
+            'models/gemini-1.5-flash',
+            'models/gemini-1.5-pro-latest',
+            'models/gemini-1.0-pro'
+        ]
+        
+        selected_model_name = next((model for model in priority_models if model in available_models), None)
+        
+        if not selected_model_name:
+            selected_model_name = available_models[0]
+            
+        model = genai.GenerativeModel(selected_model_name)
+        print(f"✅ [SISTEM PKS] Model berhasil dimuat: {selected_model_name}")
+        return model, selected_model_name
+
+    except Exception as e:
+        print(f"❌ [SISTEM PKS] Gagal memuat daftar model: {e}")
+        return None, str(e)
+
+# --- INISIALISASI MODEL ---
+model, status_model = load_best_gemini_model()
+
+with st.sidebar:
+    st.write("### Status Sistem")
+    if model:
+        st.success(f"🤖 AI Aktif: `{status_model.split('/')[-1]}`")
+    else:
+        st.error(f"Gagal memuat AI: {status_model}")
+        st.stop()
 
 # --- INISIALISASI SESSION STATE ---
 if 'draft_pks' not in st.session_state:
@@ -58,7 +113,7 @@ with st.expander("1. Form Data PKS", expanded=True):
                                       help="Jelaskan secara singkat tujuan dan teknis kerja sama ini agar AI bisa menyusun pasal-pasalnya.")
 
 # --- BAGIAN 2: GENERATE AI ---
-if st.button("Generate Draft AI"):
+if st.button("Generate Draft AI", type="primary"):
     if gambaran_besar and nama_mitra:
         with st.spinner("Gemini sedang menyusun draf PKS..."):
             prompt = f"""
@@ -87,46 +142,61 @@ if st.button("Generate Draft AI"):
             - Bagian Tanda Tangan (Sertakan NIP {nip_p1} untuk Pihak 1 dan {nip_p2} untuk Pihak 2 jika ada).
             Gunakan bahasa hukum dan tata naskah dinas universitas yang formal dan baku.
             """
-            
-            response = model.generate_content(prompt)
-            st.session_state.draft_pks = response.text
+            try:
+                response = model.generate_content(prompt)
+                st.session_state.draft_pks = response.text
+                st.success("Draf berhasil di-generate! Silakan periksa dan edit di bawah.")
+            except Exception as e:
+                st.error(f"Terjadi kesalahan saat generate teks dari API: {e}")
     else:
         st.warning("Mohon isi minimal Nama Mitra dan Gambaran Besar Kerja Sama.")
 
 # --- BAGIAN 3: EDITOR & PENYIMPANAN ---
 if st.session_state.draft_pks:
-    st.subheader("Draft PKS (Bisa diedit)")
+    st.subheader("2. Draft PKS (Editor)")
     edited_draft = st.text_area("Edit Draft di sini:", value=st.session_state.draft_pks, height=500)
     
     col_save, col_pdf = st.columns(2)
     
     with col_save:
         if st.button("Simpan ke Database"):
-            try:
-                conn = get_db_connection()
-                cur = conn.cursor()
-                # Menyimpan menggunakan parameterized query untuk mencegah SQL Injection
-                insert_query = """
-                INSERT INTO dokumen_pks (judul_ks, nama_mitra, tanggal_dibuat, isi_dokumen)
-                VALUES (%s, %s, %s, %s)
-                """
-                cur.execute(insert_query, (judul_ks, nama_mitra, datetime.now(), edited_draft))
-                conn.commit()
-                cur.close()
-                conn.close()
-                st.success("Draft berhasil disimpan ke Neon DB!")
-            except Exception as e:
-                st.error(f"Gagal menyimpan ke database: {e}")
+            conn = get_db_connection()
+            if conn:
+                try:
+                    cur = conn.cursor()
+                    insert_query = """
+                    INSERT INTO dokumen_pks (judul_ks, nama_mitra, tanggal_dibuat, isi_dokumen)
+                    VALUES (%s, %s, %s, %s)
+                    """
+                    cur.execute(insert_query, (judul_ks, nama_mitra, datetime.now(), edited_draft))
+                    conn.commit()
+                    cur.close()
+                    conn.close()
+                    st.success("Draft berhasil disimpan ke Neon DB!")
+                except Exception as e:
+                    st.error(f"Gagal menyimpan ke database: {e}")
                 
     with col_pdf:
-        if st.button("Cetak PDF"):
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size=11)
-            pdf.multi_cell(0, 5, edited_draft.encode('latin-1', 'replace').decode('latin-1'))
-            
-            file_name = f"PKS_{nama_mitra.replace(' ', '_')}.pdf"
-            pdf.output(file_name)
-            
-            with open(file_name, "rb") as f:
-                st.download_button("Unduh File PDF", f, file_name=file_name)
+        if st.button("Siapkan PDF"):
+            try:
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", size=11)
+                
+                # Encode ke latin-1 untuk menghindari error karakter saat build PDF
+                teks_bersih = edited_draft.encode('latin-1', 'replace').decode('latin-1')
+                pdf.multi_cell(0, 5, teks_bersih)
+                
+                file_name = f"PKS_{nama_mitra.replace(' ', '_')}.pdf" if nama_mitra else "PKS_Draft.pdf"
+                pdf.output(file_name)
+                
+                with open(file_name, "rb") as f:
+                    st.download_button(
+                        label="Unduh File PDF", 
+                        data=f, 
+                        file_name=file_name,
+                        mime="application/pdf",
+                        type="primary"
+                    )
+            except Exception as e:
+                st.error(f"Gagal membuat PDF: {e}")
