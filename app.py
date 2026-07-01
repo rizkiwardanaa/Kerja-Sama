@@ -147,7 +147,12 @@ if st.button("Generate Draft AI", type="primary"):
                 st.session_state.draft_pks = response.text
                 st.success("Draf berhasil di-generate! Silakan periksa dan edit di bawah.")
             except Exception as e:
-                st.error(f"Terjadi kesalahan saat generate teks dari API: {e}")
+                error_msg = str(e).lower()
+                # Tangkap spesifik error 429 atau Quota Exceeded
+                if "429" in error_msg or "quota" in error_msg:
+                    st.warning("⏳ Limit API gratis sedang penuh (maks. 5 request per menit). Mohon tunggu sekitar 1 menit sebelum menekan tombol Generate lagi.")
+                else:
+                    st.error(f"Terjadi kesalahan saat generate teks dari API: {e}")
     else:
         st.warning("Mohon isi minimal Nama Mitra dan Gambaran Besar Kerja Sama.")
 
