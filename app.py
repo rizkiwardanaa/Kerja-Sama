@@ -199,7 +199,7 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 pdf = PDF_PKS(orientation='P', unit='mm', format='A4')
                 pdf.alias_nb_pages()
                 pdf.add_page()
-                pdf.set_margins(left=25, top=20, right=25)
+                pdf.set_margins(left=25, top=10, right=25)
                 
                 # --- CETAK KOP LOGO ---
                 if os.path.exists("logo_unmul.png"):
