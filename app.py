@@ -38,7 +38,6 @@ def init_db():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Buat tabel utama
         cur.execute("""
             CREATE TABLE IF NOT EXISTS dokumen_pks (
                 id SERIAL PRIMARY KEY,
@@ -50,12 +49,12 @@ def init_db():
         """)
         conn.commit()
         
-        # Tambahkan kolom form_data untuk menyimpan state jika belum ada
+        # Cek dan tambahkan kolom form_data jika belum ada
         try:
             cur.execute("ALTER TABLE dokumen_pks ADD COLUMN form_data TEXT")
             conn.commit()
         except DuplicateColumn:
-            conn.rollback() # Abaikan jika kolom sudah ada
+            conn.rollback()
             
         cur.close()
         conn.close()
@@ -74,11 +73,9 @@ if 'edit_data' not in st.session_state:
 if 'menu_selector' not in st.session_state:
     st.session_state.menu_selector = "📝 Buat/Edit PKS"
 
-# Fungsi helper untuk mengambil nilai default saat edit
 def get_val(key, default):
     return st.session_state.edit_data.get(key, default)
 
-# Fungsi navigasi untuk tombol edit
 def action_edit(doc_id, form_data_str):
     st.session_state.edit_id = doc_id
     if form_data_str:
@@ -86,9 +83,9 @@ def action_edit(doc_id, form_data_str):
         st.session_state.pasal_json = st.session_state.edit_data.get('pasal_json', {})
     else:
         st.session_state.edit_data = {}
+        st.session_state.pasal_json = {}
     st.session_state.menu_selector = "📝 Buat/Edit PKS"
 
-# Fungsi untuk hapus data
 def action_delete(doc_id):
     try:
         conn = get_db_connection()
@@ -101,9 +98,17 @@ def action_delete(doc_id):
     except Exception as e:
         st.sidebar.error(f"Gagal menghapus: {e}")
 
-# --- SIDEBAR NAVIGASI ---
+# --- NAVIGATION SIDEBAR ---
 st.sidebar.title("Navigasi Sistem")
-menu = st.sidebar.radio("Pilih Halaman:", ["📝 Buat/Edit PKS", "📂 Riwayat Dokumen"], key="menu_selector")
+menu_options = ["📝 Buat/Edit PKS", "📂 Riwayat Dokumen"]
+current_idx = menu_options.index(st.session_state.menu_selector)
+
+# Hapus param key dari radio untuk menghindari error modify after instantiate
+menu = st.sidebar.radio("Pilih Halaman:", menu_options, index=current_idx)
+
+if menu != st.session_state.menu_selector:
+    st.session_state.menu_selector = menu
+    st.rerun()
 
 if st.session_state.edit_id and menu == "📝 Buat/Edit PKS":
     st.sidebar.warning("Sedang dalam mode Edit Dokumen.")
@@ -205,7 +210,6 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             btn_label = "Update Database" if st.session_state.edit_id else "Simpan ke Database"
             if st.button(btn_label):
                 try:
-                    # Mengemas semua inputan form menjadi string JSON
                     form_dict = {
                         'judul_ks': judul_ks, 'no_unit_unmul': no_unit_unmul, 'tgl_teks': tgl_teks,
                         'bln_teks': bln_teks, 'thn_teks': thn_teks, 'nama_p1': nama_p1,
@@ -242,6 +246,7 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             if st.button("Siapkan PDF Cetak"):
                 class PDF_PKS(FPDF):
                     def footer(self):
+                        # Posisi statis dari bawah: 35mm
                         self.set_y(-35)
                         self.set_font('Arial', '', 10)
                         
@@ -249,18 +254,22 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                         col_w = 32
                         row_h = 5
                         
+                        # Baris 1: Tulisan Paraf
                         self.set_x(start_x)
                         self.cell(col_w, row_h, 'Paraf', 'LTR', 0, 'C')
                         self.cell(col_w, row_h, 'Paraf', 'LTR', 1, 'C')
                         
+                        # Baris 2: Nama Pihak
                         self.set_x(start_x)
                         self.cell(col_w, row_h, 'PIHAK KESATU', 'LBR', 0, 'C')
                         self.cell(col_w, row_h, 'PIHAK KEDUA', 'LBR', 1, 'C')
                         
+                        # Baris 3: Kotak Kosong
                         self.set_x(start_x)
                         self.cell(col_w, 10, '', 1, 0, 'C')
-                        self.cell(col_w, 10, '', 1, 0, 'C')
+                        self.cell(col_w, 10, '', 1, 1, 'C') # 1, 1 untuk break ke bawah jika ada teks lagi
                         
+                        # Nomor Halaman di kanan bawah
                         self.set_y(-25)
                         self.cell(0, 10, f'Halaman {self.page_no()} dari {{nb}}', 0, 0, 'R')
 
@@ -269,8 +278,9 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 pdf.add_page()
                 
                 # --- SOLUSI TABRAKAN PDF ---
-                # Memastikan halaman break pada margin bawah 40mm (di atas tabel paraf)
-                pdf.set_auto_page_break(auto=True, margin=40) 
+                # Margin = 45. Memberi batas 45mm dari margin bawah agar pindah halaman 
+                # SEBELUM menyentuh area tabel paraf yang dimulai di -35mm
+                pdf.set_auto_page_break(auto=True, margin=45) 
                 
                 pdf.set_margins(left=25, top=20, right=25)
                 
@@ -306,11 +316,12 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 pdf.cell(0, 6, f"Nomor : {no_mitra}", 0, 1, 'C')
                 pdf.ln(10)
                 
-                # --- CETAK PEMBUKA (HANGING INDENT) ---
+                # --- CETAK PEMBUKA (HANGING INDENT / MENJOROK) ---
                 pdf.set_font("Arial", '', 11)
                 pdf.multi_cell(0, 6, f"Pada hari ini, tanggal {tgl_teks} bulan {bln_teks}, tahun {thn_teks} yang bertanda tangan di bawah ini:", align='J')
                 pdf.ln(3)
                 
+                # Pihak 1 Indent
                 pdf.set_x(25)
                 pdf.cell(7, 6, "1.", 0, 0, 'L')
                 pdf.set_x(32)
@@ -318,6 +329,7 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 pdf.multi_cell(0, 6, teks_p1, align='J')
                 pdf.ln(3)
                 
+                # Pihak 2 Indent
                 pdf.set_x(25)
                 pdf.cell(7, 6, "2.", 0, 0, 'L')
                 pdf.set_x(32)
@@ -353,6 +365,8 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
                 
                 pdf.set_font("Arial", '', 11)
                 pdf.set_x(25)
+                
+                # Format NIP tanpa tanda titik
                 pdf.cell(80, 5, f'NIP {nip_p1}', 0, 0, 'L') 
                 if nip_p2:
                     pdf.cell(80, 5, f'NIP {nip_p2}', 0, 1, 'L')
@@ -372,7 +386,6 @@ elif menu == "📂 Riwayat Dokumen":
     
     try:
         conn = get_db_connection()
-        # Ambil juga form_data dari database
         query = "SELECT id, judul_ks, nama_mitra, tanggal_dibuat, form_data FROM dokumen_pks ORDER BY tanggal_dibuat DESC"
         cur = conn.cursor()
         cur.execute(query)
@@ -381,7 +394,6 @@ elif menu == "📂 Riwayat Dokumen":
         conn.close()
         
         if rows:
-            # Header Tabel Kustom menggunakan Streamlit Columns
             head_col1, head_col2, head_col3, head_col4 = st.columns([2, 3, 3, 2])
             head_col1.markdown("**Tanggal**")
             head_col2.markdown("**Mitra**")
@@ -390,7 +402,6 @@ elif menu == "📂 Riwayat Dokumen":
             
             st.divider()
             
-            # Melakukan iterasi per baris data
             for row in rows:
                 doc_id, jdl, mitra, tgl, form_data = row
                 
@@ -401,11 +412,10 @@ elif menu == "📂 Riwayat Dokumen":
                 
                 if col_edit.button("✏️ Edit", key=f"edit_{doc_id}"):
                     action_edit(doc_id, form_data)
-                    st.rerun() # Langsung alihkan ke halaman editor
                     
                 if col_del.button("🗑️ Hapus", key=f"del_{doc_id}"):
                     action_delete(doc_id)
-                    st.rerun() # Refresh tabel setelah dihapus
+                    st.rerun()
                     
             st.divider()
         else:
