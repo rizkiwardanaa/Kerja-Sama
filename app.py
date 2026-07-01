@@ -100,6 +100,27 @@ def action_delete(doc_id):
     except Exception as e:
         st.sidebar.error(f"Gagal menghapus: {e}")
 
+# --- FUNGSI HELPER TANGGAL ---
+def terbilang(angka):
+    satuan = ["", "Satu", "Dua", "Tiga", "Empat", "Lima", "Enam", "Tujuh", "Delapan", "Sembilan", "Sepuluh", "Sebelas"]
+    if angka < 12: return satuan[angka]
+    elif angka < 20: return satuan[angka - 10] + " Belas"
+    elif angka < 100: return (satuan[angka // 10] + " Puluh " + satuan[angka % 10]).strip()
+    elif angka < 200: return "Seratus " + terbilang(angka - 100).strip()
+    elif angka < 1000: return (satuan[angka // 100] + " Ratus " + terbilang(angka % 100)).strip()
+    elif angka < 2000: return "Seribu " + terbilang(angka - 1000).strip()
+    elif angka < 1000000: return (terbilang(angka // 1000) + " Ribu " + terbilang(angka % 1000)).strip()
+    return str(angka)
+
+def get_tanggal_naratif(tgl_obj):
+    if not tgl_obj: return ""
+    bulan_indo = ["", "Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+    tgl_teks = terbilang(tgl_obj.day)
+    bln_teks = bulan_indo[tgl_obj.month]
+    thn_teks = terbilang(tgl_obj.year)
+    tgl_format = tgl_obj.strftime("%d/%m/%Y")
+    return f"tanggal {tgl_teks} bulan {bln_teks}, tahun {thn_teks} ({tgl_format})"
+
 # --- NAVIGATION SIDEBAR ---
 st.sidebar.title("Navigasi Sistem")
 menu_options = ["📝 Buat/Edit PKS", "📂 Riwayat Dokumen"]
@@ -135,9 +156,9 @@ if menu == "📝 Buat/Edit PKS":
                 no_unit_unmul = st.text_input("Nomor Surat Pihak 1 (Unmul)", value=get_val('no_unit_unmul', ""))
                 
                 st.markdown("**Waktu Penandatanganan**")
-                tgl_teks = st.text_input("Tanggal (Teks)", value=get_val('tgl_teks', ""), placeholder="Dua Puluh Dua")
-                bln_teks = st.text_input("Bulan (Teks)", value=get_val('bln_teks', ""), placeholder="April")
-                thn_teks = st.text_input("Tahun (Teks)", value=get_val('thn_teks', ""), placeholder="Dua Ribu Dua Puluh Enam")
+                default_tgl_str = get_val('tgl_ttd', datetime.now().strftime("%Y-%m-%d"))
+                default_tgl_obj = datetime.strptime(default_tgl_str, "%Y-%m-%d").date()
+                tgl_ttd = st.date_input("Pilih Tanggal Penandatanganan", value=default_tgl_obj)
                 
                 st.subheader("Pihak 1 (Universitas Mulawarman)")
                 nama_p1 = st.text_input("Nama Pejabat P1", value=get_val('nama_p1', "Prof. Dr. M. Bahri Arifin, M.Hum"))
@@ -160,7 +181,8 @@ if menu == "📝 Buat/Edit PKS":
                 tgl_berakhir = st.text_input("Tanggal Berakhir Kerja Sama", value=get_val('tgl_berakhir', "Dua Puluh Dua April Dua Ribu Tiga Puluh"))
                 ruang_lingkup = st.text_area("Ruang Lingkup & Gambaran Besar", value=get_val('ruang_lingkup', ""), placeholder="Jelaskan detail prodi yang terlibat, teknis pelaksanaan, dan pembagian dana...")
 
-        teks_pembuka = f"""Pada hari ini, tanggal {tgl_teks} bulan {bln_teks}, tahun {thn_teks} yang bertanda tangan di bawah ini:
+        narasi_tanggal = get_tanggal_naratif(tgl_ttd)
+        teks_pembuka = f"""Pada hari ini, {narasi_tanggal} yang bertanda tangan di bawah ini:
 1. {nama_p1}: {jabatan_p1} oleh karena itu sah mewakili dan bertindak untuk dan atas nama {lembaga_p1}, Universitas Mulawarman, yang berkedudukan di {alamat_p1}, selanjutnya disebut sebagai PIHAK KESATU.
 2. {nama_p2}: {jabatan_p2} oleh karena itu sah mewakili dan bertindak untuk dan atas nama {nama_mitra}, yang berkedudukan di {alamat_mitra}, selanjutnya disebut sebagai PIHAK KEDUA.
 
@@ -197,9 +219,8 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             st.session_state.pasal_json = edited_pasal
             
         st.session_state.edit_data = {
-            'judul_ks': judul_ks, 'no_unit_unmul': no_unit_unmul, 'tgl_teks': tgl_teks,
-            'bln_teks': bln_teks, 'thn_teks': thn_teks, 'nama_p1': nama_p1,
-            'jabatan_p1': jabatan_p1, 'lembaga_p1': lembaga_p1, 'alamat_p1': alamat_p1,
+            'judul_ks': judul_ks, 'no_unit_unmul': no_unit_unmul, 'tgl_ttd': tgl_ttd.strftime("%Y-%m-%d"),
+            'nama_p1': nama_p1, 'jabatan_p1': jabatan_p1, 'lembaga_p1': lembaga_p1, 'alamat_p1': alamat_p1,
             'nip_p1': nip_p1, 'no_mitra': no_mitra, 'nama_mitra': nama_mitra,
             'nama_p2': nama_p2, 'jabatan_p2': jabatan_p2, 'alamat_mitra': alamat_mitra,
             'nip_p2': nip_p2, 'tgl_berakhir': tgl_berakhir, 'ruang_lingkup': ruang_lingkup, 
@@ -327,34 +348,15 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             pdf.cell(0, 6, f"Nomor : {no_mitra}", 0, 1, 'C')
             pdf.ln(10)
             
+            # --- CETAK PEMBUKA (Dikembalikan rata kiri biasa tanpa indentasi) ---
             pdf.set_font("Arial", '', 11)
-            pdf.multi_cell(0, 6, f"Pada hari ini, tanggal {tgl_teks} bulan {bln_teks}, tahun {thn_teks} yang bertanda tangan di bawah ini:", align='J')
-            pdf.ln(3)
-            
-            pdf.set_x(25)
-            pdf.cell(7, 6, "1.", 0, 0, 'L')
-            pdf.set_x(32)
-            teks_p1 = f"{nama_p1}: {jabatan_p1} oleh karena itu sah mewakili dan bertindak untuk dan atas nama {lembaga_p1}, Universitas Mulawarman, yang berkedudukan di {alamat_p1}, selanjutnya disebut sebagai PIHAK KESATU."
-            pdf.multi_cell(0, 6, teks_p1, align='J')
-            pdf.ln(3)
-            
-            pdf.set_x(25)
-            pdf.cell(7, 6, "2.", 0, 0, 'L')
-            pdf.set_x(32)
-            teks_p2 = f"{nama_p2}: {jabatan_p2} oleh karena itu sah mewakili dan bertindak untuk dan atas nama {nama_mitra}, yang berkedudukan di {alamat_mitra}, selanjutnya disebut sebagai PIHAK KEDUA."
-            pdf.multi_cell(0, 6, teks_p2, align='J')
-            pdf.ln(3)
-            
-            pdf.set_x(25)
-            teks_penutup = f"PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat untuk bersama-sama membuat Perjanjian Kerja Sama mengenai {judul_ks} yang dilaksanakan oleh PARA PIHAK seperti diatur dalam pasal sebagai berikut."
-            pdf.multi_cell(0, 6, teks_penutup, align='J')
+            pdf.multi_cell(0, 6, teks_pembuka.encode('latin-1', 'replace').decode('latin-1'), align='J')
             pdf.ln(5)
             
-            # --- CETAK PASAL-PASAL (PERBAIKAN STRUKTUR JUDUL) ---
+            # --- CETAK PASAL-PASAL ---
             for jdl, isi in st.session_state.pasal_json.items():
                 pdf.set_font("Arial", 'B', 11)
                 
-                # Cek jika judul mengandung titik dua (:) untuk dipecah ke baris baru
                 if ":" in jdl:
                     pasal_num, pasal_title = jdl.split(":", 1)
                     pdf.multi_cell(0, 6, pasal_num.strip().upper(), align='C')
@@ -374,13 +376,11 @@ PIHAK KESATU dan PIHAK KEDUA selanjutnya disebut PARA PIHAK. Dengan ini sepakat 
             pdf.cell(80, 5, 'PIHAK KEDUA,', 0, 1, 'L')
             pdf.ln(25)
             
-            # Hilangkan garis bawah ('U') pada nama pejabat
             pdf.set_font("Arial", '', 11) 
             pdf.set_x(25)
             pdf.cell(80, 5, nama_p1, 0, 0, 'L')
             pdf.cell(80, 5, nama_p2, 0, 1, 'L')
             
-            # Ubah font NIP menjadi tebal ('B')
             pdf.set_font("Arial", 'B', 11) 
             pdf.set_x(25)
             pdf.cell(80, 5, f'NIP {nip_p1}', 0, 0, 'L') 
