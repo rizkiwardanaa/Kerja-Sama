@@ -1,18 +1,16 @@
 import streamlit as st
 import google.generativeai as genai
 from db_config import init_db
-
-# (Nantinya buat file page_pks.py dan page_riwayat.py lalu import di sini)
-# from page_pks import render_pks 
-# from page_riwayat import render_riwayat
+from page_pks import render_pks
 from page_ia import render_ia
+from page_riwayat import render_riwayat
 
 st.set_page_config(page_title="Generator Naskah Hukum Unmul", layout="wide")
 
-# Inisialisasi Database
+# 1. Inisialisasi Database
 init_db()
 
-# Konfigurasi AI di tingkat aplikasi utama
+# 2. Inisialisasi AI
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except KeyError:
@@ -28,23 +26,26 @@ def get_ai_model():
 
 model = get_ai_model()
 
-# --- NAVIGASI MULTI-MODUL ---
+# 3. Navigasi Sidebar
 st.sidebar.title("Sistem Naskah Kerja Sama")
 st.sidebar.markdown("Universitas Mulawarman")
 
-menu = st.sidebar.radio(
-    "Navigasi Modul:", 
-    ["📝 Modul PKS (Induk)", "⚙️ Modul IA (Turunan)", "📂 Riwayat & Database"]
-)
+if 'menu_aktif' not in st.session_state:
+    st.session_state.menu_aktif = "📝 Modul PKS (Induk)"
 
+menu_options = ["📝 Modul PKS (Induk)", "⚙️ Modul IA (Turunan)", "📂 Riwayat & Database"]
+current_idx = menu_options.index(st.session_state.menu_aktif)
+
+menu = st.sidebar.radio("Navigasi Modul:", menu_options, index=current_idx)
+
+if menu != st.session_state.menu_aktif:
+    st.session_state.menu_aktif = menu
+    st.rerun()
+
+# 4. Routing Halaman
 if menu == "📝 Modul PKS (Induk)":
-    st.info("Pindahkan kode UI PKS Anda ke dalam fungsi render_pks() di file page_pks.py")
-    # render_pks(model)
-    
+    render_pks(model)
 elif menu == "⚙️ Modul IA (Turunan)":
-    # Memanggil antarmuka IA dari file page_ia.py
     render_ia(model)
-    
 elif menu == "📂 Riwayat & Database":
-    st.info("Pindahkan kode UI Riwayat Anda ke dalam fungsi render_riwayat() di file page_riwayat.py")
-    # render_riwayat()
+    render_riwayat()
