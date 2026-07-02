@@ -10,7 +10,7 @@ def init_db():
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # 1. Tabel PKS (Sudah ada, IF NOT EXISTS akan mengamankan)
+        # Tabel PKS
         cur.execute("""
             CREATE TABLE IF NOT EXISTS dokumen_pks (
                 id SERIAL PRIMARY KEY,
@@ -22,7 +22,7 @@ def init_db():
             )
         """)
         
-        # 2. Tabel Baru untuk IA (Berelasi dengan PKS lewat pks_id)
+        # Tabel IA
         cur.execute("""
             CREATE TABLE IF NOT EXISTS dokumen_ia (
                 id SERIAL PRIMARY KEY,
