@@ -1,140 +1,162 @@
 import streamlit as st
 import pandas as pd
 import json
-import google.generativeai as genai
-from db_config import get_db_connection
+from fpdf import FPDF
 from datetime import datetime
+import os
+import tempfile
+from db_config import get_db_connection
 
-# Asumsi model AI dikirim dari app.py
 def render_ia(model):
-    st.title("Pembuatan Implementation Arrangement (IA)")
+    st.title("Generator Implementation Arrangement (IA)")
     
-    # 1. Pilih PKS Induk dari Database
+    if 'ia_json' not in st.session_state: st.session_state.ia_json = {}
+    if 'ia_pdf_ready' not in st.session_state: st.session_state.ia_pdf_ready = False
+    
+    # 1. Pilih PKS Induk
     conn = get_db_connection()
     df_pks = pd.read_sql("SELECT id, judul_ks, nama_mitra, form_data FROM dokumen_pks ORDER BY tanggal_dibuat DESC", conn)
     conn.close()
     
     if df_pks.empty:
-        st.warning("Belum ada dokumen PKS di database. Buat PKS terlebih dahulu sebelum membuat IA.")
+        st.warning("Belum ada dokumen PKS. Buat PKS terlebih dahulu.")
         return
 
-    # Opsi dropdown PKS
-    pks_options = df_pks.apply(lambda row: f"{row['nama_mitra']} - {row['judul_ks']} (ID: {row['id']})", axis=1).tolist()
-    
+    pks_options = df_pks.apply(lambda r: f"{r['nama_mitra']} - {r['judul_ks']} (ID: {r['id']})", axis=1).tolist()
     st.markdown("### 1. Pilih Dokumen Induk (PKS)")
-    selected_pks_str = st.selectbox("Pilih PKS yang akan diturunkan menjadi IA:", pks_options)
+    selected_pks = st.selectbox("PKS Induk:", pks_options)
     
-    # Ambil ID dan Data dari PKS yang dipilih
-    selected_index = pks_options.index(selected_pks_str)
-    pks_data = df_pks.iloc[selected_index]
+    idx = pks_options.index(selected_pks)
+    pks_data = df_pks.iloc[idx]
     pks_id = pks_data['id']
-    form_pks_induk = json.loads(pks_data['form_data'])
+    form_pks = json.loads(pks_data['form_data'])
     
-    # Tampilkan read-only data induk agar user ingat konteksnya
-    with st.expander("Lihat Ringkasan PKS Induk", expanded=False):
-        st.info(f"**Mitra:** {form_pks_induk.get('nama_mitra', '')}\n\n**Ruang Lingkup PKS:** {form_pks_induk.get('ruang_lingkup', '')}")
-
-    st.markdown("---")
-    
-    # 2. Form Input Spesifik IA
-    with st.form("form_ia_input"):
-        st.markdown("### 2. Detail Implementation Arrangement")
-        judul_ia = st.text_input("Judul/Nama Kegiatan Spesifik", placeholder="Contoh: Program Pertukaran Mahasiswa Merdeka 2026")
-        
+    with st.form("form_ia"):
+        st.markdown("### 2. Detail Spesifik IA (Bahasa Inggris)")
         col1, col2 = st.columns(2)
         with col1:
-            st.subheader("Person In Charge (Unmul)")
-            pic_nama_p1 = st.text_input("Nama PIC Unmul", placeholder="Nama Dosen/Kaprodi")
-            pic_jabatan_p1 = st.text_input("Jabatan PIC Unmul")
-            pic_kontak_p1 = st.text_input("Kontak/Email PIC Unmul")
+            no_ia = st.text_input("IA Number", placeholder="856/UN17.13/HK.07.01/2024")
+            prodi_unmul = st.text_input("Study Program (Unmul)", value="Indonesian Literature Study Program")
+            tgl_ia_str = st.text_input("Signed Date (e.g., 4th October 2024)", value="4th October 2024")
             
+            st.subheader("First Party (Mitra)")
+            pic_nama_p1 = st.text_input("First Party PIC Name", placeholder="Prof. Shermanov Eldor")
+            pic_jabatan_p1 = st.text_input("First Party Title", placeholder="Rector of the Uzbek...")
         with col2:
-            st.subheader("Person In Charge (Mitra)")
-            pic_nama_p2 = st.text_input("Nama PIC Mitra")
-            pic_jabatan_p2 = st.text_input("Jabatan PIC Mitra")
-            pic_kontak_p2 = st.text_input("Kontak/Email PIC Mitra")
+            judul_ia = st.text_input("IA Subject/Title", placeholder="Implementation of Academic Collaboration")
+            st.write("") # spacing
+            st.write("")
             
-        jadwal_pelaksanaan = st.text_input("Waktu Pelaksanaan Kegiatan", placeholder="Bulan Agustus - Desember 2026")
-        detail_teknis = st.text_area("Rincian Kegiatan & Output", placeholder="Jelaskan detail apa yang akan dilakukan, pembagian tugas, dan target output...")
-        detail_dana = st.text_area("Rincian Pembiayaan (Opsional)", placeholder="Sebutkan jika ada sumber dana spesifik, jika tidak isi 'Ditanggung masing-masing pihak'")
+            st.subheader("Second Party (Unmul)")
+            pic_nama_p2 = st.text_input("Second Party PIC Name", placeholder="Dr. Ahmad Mubarok")
+            pic_jabatan_p2 = st.text_input("Second Party Title", placeholder="Head of Indonesian Literature Department")
+            
+        detail = st.text_area("Activity Details (Prompt untuk AI)", placeholder="Jelaskan secara ringkas kegiatan, objektif, pendanaan, dsb dalam bahasa Indonesia atau Inggris...")
         
-        btn_generate_ia = st.form_submit_button("Generate Pasal IA (AI)", type="primary")
+        # Teks Pembuka Statis Inggris
+        teks_pembuka = f"This Implementation of Arrangements is developed as a derivative of the Cooperation Agreement between {form_pks.get('nama_mitra', '')} and the {form_pks.get('lembaga_p1', 'Faculty')}, Mulawarman University, specifically for collaborative activities involving the {prodi_unmul} at Mulawarman University."
 
-    # State untuk menampung hasil generate IA
-    if 'ia_json' not in st.session_state: st.session_state.ia_json = {}
-
-    # 3. Logika Generate IA
-    if btn_generate_ia:
-        if not judul_ia or not detail_teknis:
-            st.error("Mohon isi Judul Kegiatan dan Rincian Kegiatan terlebih dahulu.")
-        else:
-            with st.spinner("Menyusun draf IA..."):
-                prompt = f"""
-                Buat pasal-pasal untuk dokumen Implementation Arrangement (IA).
-                IA ini adalah turunan dari Perjanjian Kerja Sama (PKS) antara Universitas Mulawarman dan {form_pks_induk.get('nama_mitra', '')}.
-                
-                Konteks Kegiatan Spesifik:
-                - Judul IA: {judul_ia}
-                - Waktu Pelaksanaan: {jadwal_pelaksanaan}
-                - Rincian Kegiatan: {detail_teknis}
-                - Pembiayaan: {detail_dana}
-                - PIC Pihak 1: {pic_nama_p1} ({pic_jabatan_p1})
-                - PIC Pihak 2: {pic_nama_p2} ({pic_jabatan_p2})
-                
-                Keluarkan output HANYA format JSON murni. Kunci:
-                {{
-                    "Pasal 1: Tujuan Pelaksanaan": "...",
-                    "Pasal 2: Ruang Lingkup dan Mekanisme": "...",
-                    "Pasal 3: Hak dan Kewajiban": "...",
-                    "Pasal 4: Pembiayaan": "...",
-                    "Pasal 5: Person In Charge (PIC)": "(Sebutkan nama dan kontak PIC secara jelas)",
-                    "Pasal 6: Jangka Waktu Pelaksanaan": "...",
-                    "Pasal 7: Ketentuan Lain-lain": "..."
-                }}
-                """
-                try:
-                    response = model.generate_content(prompt)
-                    raw_json = response.text.replace('```json', '').replace('```', '').strip()
-                    st.session_state.ia_json = json.loads(raw_json)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Gagal generate IA: {e}")
-
-    # 4. Editor IA dan Simpan
-    if st.session_state.ia_json:
-        st.markdown("### 3. Editor Draft IA")
+        btn_gen = st.form_submit_button("Generate AI Sections (English)", type="primary")
+        edited_ia = {}
+        btn_save = btn_pdf = False
         
-        # Pembuka IA (Bisa dikonfigurasi lebih rapi nanti)
-        pembuka_ia = f"Sebagai tindak lanjut dari Perjanjian Kerja Sama antara Universitas Mulawarman dan {form_pks_induk.get('nama_mitra')}, PARA PIHAK sepakat untuk melaksanakan {judul_ia} dengan ketentuan sebagai berikut:"
-        st.info(pembuka_ia)
-        
-        with st.form("form_ia_save"):
-            edited_ia = {}
+        if st.session_state.ia_json:
+            st.markdown("### 3. Editor (English Sections)")
+            st.info(teks_pembuka)
             for jdl, isi in st.session_state.ia_json.items():
-                edited_ia[jdl] = st.text_area(jdl, value=isi, height=120)
+                edited_ia[jdl] = st.text_area(jdl, value=isi, height=200)
             
-            if st.form_submit_button("Simpan IA ke Database"):
-                # Menyatukan teks
-                full_ia_doc = pembuka_ia + "\n\n"
-                for jdl, isi in edited_ia.items():
-                    full_ia_doc += f"{jdl}\n{isi}\n\n"
-                
-                # Simpan form data
-                form_ia_data = {
-                    'judul_ia': judul_ia, 'pic_nama_p1': pic_nama_p1, 'pic_nama_p2': pic_nama_p2,
-                    'jadwal': jadwal_pelaksanaan, 'teknis': detail_teknis, 'ia_json': edited_ia
-                }
-                
-                try:
-                    conn = get_db_connection()
-                    cur = conn.cursor()
-                    cur.execute(
-                        "INSERT INTO dokumen_ia (pks_id, judul_ia, tanggal_dibuat, isi_dokumen, form_data) VALUES (%s, %s, %s, %s, %s)",
-                        (pks_id, judul_ia, datetime.now(), full_ia_doc, json.dumps(form_ia_data))
-                    )
-                    conn.commit()
-                    cur.close()
-                    conn.close()
-                    st.success("Draft IA berhasil disimpan dan ditautkan ke PKS Induk!")
-                except Exception as e:
-                    st.error(f"Error menyimpan IA: {e}")
+            cs, cp = st.columns(2)
+            with cs: btn_save = st.form_submit_button("Simpan IA")
+            with cp: btn_pdf = st.form_submit_button("Siapkan PDF IA")
+
+    # LOGIKA
+    if btn_gen:
+        with st.spinner("AI is generating English sections..."):
+            prompt = f"""
+            Write the articles for an Implementation Arrangement in English. 
+            Context: {detail}. 
+            Output strictly valid JSON with these exact keys:
+            {{
+                "1. OBJECTIVES": "Explain academic, research, and cultural objectives.",
+                "2. RESPONSIBILITIES": "Explain program coordination and implementation.",
+                "3. FINANCIAL ARRANGEMENTS": "Explain travel, accommodation, and operational costs.",
+                "4. DURATION": "Explain the duration (e.g. 5 years).",
+                "5. EVALUATION AND REVIEW": "Explain annual review.",
+                "6. TERMINATION": "Explain termination notice period."
+            }}
+            """
+            try:
+                res = model.generate_content(prompt)
+                st.session_state.ia_json = json.loads(res.text.replace('```json', '').replace('```', '').strip())
+                st.session_state.ia_pdf_ready = False
+                st.rerun()
+            except Exception as e: st.error(f"Error AI: {e}")
+
+    if btn_save:
+        try:
+            full_doc = teks_pembuka + "\n\n" + "\n\n".join([f"{k}\n{v}" for k,v in edited_ia.items()])
+            data_ia = {'no_ia': no_ia, 'prodi_unmul': prodi_unmul, 'tgl_ia': tgl_ia_str, 'pic_nama_p1': pic_nama_p1, 'pic_jabatan_p1': pic_jabatan_p1, 'pic_nama_p2': pic_nama_p2, 'pic_jabatan_p2': pic_jabatan_p2, 'ia_json': edited_ia}
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("INSERT INTO dokumen_ia (pks_id, judul_ia, tanggal_dibuat, isi_dokumen, form_data) VALUES (%s, %s, %s, %s, %s)", (pks_id, judul_ia, datetime.now(), full_doc, json.dumps(data_ia)))
+            conn.commit(); conn.close()
+            st.success("IA Tersimpan!")
+        except Exception as e: st.error(f"DB Error: {e}")
+
+    if btn_pdf:
+        try:
+            class PDF_IA(FPDF):
+                def footer(self):
+                    self.set_y(-15); self.set_font('Arial', '', 10)
+                    self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+            pdf = PDF_IA('P', 'mm', 'A4'); pdf.add_page(); pdf.set_auto_page_break(True, 20); pdf.set_margins(25, 20, 25)
+            
+            # Header IA
+            pdf.set_font("Arial", 'B', 12)
+            for t in ["IMPLEMENTATION OF ARRANGEMENTS", f"BETWEEN {form_pks.get('nama_mitra', '').upper()}", "AND", f"{form_pks.get('lembaga_p1', 'FACULTY').upper()}, MULAWARMAN UNIVERSITY", f"SPECIFIC TO THE {prodi_unmul.upper()}", "", f"Number: {no_ia}"]:
+                pdf.cell(0, 6, t, 0, 1, 'C') if t else pdf.ln(5)
+            
+            pdf.ln(10)
+            pdf.set_font("Arial", '', 11)
+            pdf.multi_cell(0, 6, teks_pembuka.encode('latin-1', 'replace').decode('latin-1'), align='J')
+            pdf.ln(5)
+            
+            for jdl, isi in edited_ia.items():
+                pdf.set_font("Arial", 'B', 11)
+                pdf.multi_cell(0, 6, jdl, align='L') # Judul rata kiri
+                pdf.set_font("Arial", '', 11)
+                pdf.multi_cell(0, 6, isi.encode('latin-1', 'replace').decode('latin-1'), align='J')
+                pdf.ln(5)
+            
+            # Format Tanda Tangan Atas Bawah (Sesuai Referensi)
+            pdf.ln(10)
+            pdf.set_font("Arial", '', 11)
+            pdf.cell(0, 6, f"Signed on {tgl_ia_str},", 0, 1, 'L')
+            pdf.ln(5)
+            
+            pdf.cell(0, 6, "First Party:", 0, 1, 'L')
+            pdf.cell(0, 6, form_pks.get('nama_mitra', ''), 0, 1, 'L')
+            pdf.ln(20) # Ruang TTD
+            pdf.set_font("Arial", 'B', 11)
+            pdf.cell(0, 6, pic_nama_p1, 0, 1, 'L')
+            pdf.set_font("Arial", '', 11)
+            pdf.cell(0, 6, pic_jabatan_p1, 0, 1, 'L')
+            
+            pdf.ln(10)
+            
+            pdf.cell(0, 6, "Second Party:", 0, 1, 'L')
+            pdf.cell(0, 6, f"The {prodi_unmul}, {form_pks.get('lembaga_p1', '')}, Mulawarman University", 0, 1, 'L')
+            pdf.ln(20) # Ruang TTD (termasuk area materai jika ada)
+            pdf.set_font("Arial", 'B', 11)
+            pdf.cell(0, 6, pic_nama_p2, 0, 1, 'L')
+            pdf.set_font("Arial", '', 11)
+            pdf.cell(0, 6, pic_jabatan_p2, 0, 1, 'L')
+            
+            pdf.output("Draft_IA.pdf")
+            st.session_state.ia_pdf_ready = True
+        except Exception as e: st.error(f"PDF Error: {e}")
+
+    if st.session_state.ia_pdf_ready and os.path.exists("Draft_IA.pdf"):
+        with open("Draft_IA.pdf", "rb") as f: st.download_button("Unduh PDF IA", f, "IA_Document.pdf", "application/pdf", type="primary")
