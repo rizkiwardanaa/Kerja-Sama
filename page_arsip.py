@@ -253,13 +253,16 @@ def render_arsip():
             c4.write(f"{row['tgl_mulai']} s.d {row['tgl_selesai']}")
             
             with c5:
-                # Tombol unduh spesifik untuk dokumen pada baris ini
+                # Tombol placeholder
                 if st.download_button(label="⬇️ Unduh PDF", data=b'', file_name="placeholder.pdf", key=f"btn_dl_{row['id']}"): 
                     pass 
                 
-                # Mengambil data biner dari DB hanya untuk baris ini agar memori tidak berat
                 cur.execute("SELECT file_pdf FROM arsip_dokumen WHERE id = %s", (row['id'],))
-                pdf_data = cur.fetchone()[0]
+                raw_data = cur.fetchone()[0]
+                
+                # --- PERBAIKAN DI SINI ---
+                # Memaksa konversi memoryview dari PostgreSQL menjadi bytes murni
+                pdf_data = bytes(raw_data) if raw_data else b""
                 
                 c5.empty()
                 c5.download_button(
