@@ -17,8 +17,9 @@ try:
     API_KEY = st.secrets["GEMINI_API_KEY"].strip().strip('"').strip("'")
     os.environ["GOOGLE_API_KEY"] = API_KEY
     genai.configure(api_key=API_KEY)
-except:
-    API_KEY = ""
+except Exception as e:
+    st.error(f"Gagal membaca file secrets: {e}")
+    API_KEY = "KUNCI_TIDAK_DITEMUKAN"
 
 def sanitize_error(error_obj):
     err_str = str(error_obj)
@@ -29,6 +30,10 @@ def sanitize_error(error_obj):
 
 def render_arsip():
     st.title("🗄️ Arsip & Ekstraksi Dokumen Otomatis")
+    
+    # TAMBAHKAN BARIS INI UNTUK DEBUGGING (Bisa dihapus nanti jika sudah berhasil)
+    st.warning(f"🔍 DEBUG INFO: Kunci API yang ditarik oleh sistem berawalan: **{API_KEY[:10]}...**")
+    
     st.write("Unggah file PDF PKS atau IA. Sistem akan membaca isinya, mengekstrak data penting, dan menyimpannya ke database.")
 
     uploaded_files = st.file_uploader("Unggah Dokumen (Bisa lebih dari 1 file)", type=["pdf"], accept_multiple_files=True)
