@@ -4,13 +4,14 @@ from db_config import init_db
 from page_pks import render_pks
 from page_ia import render_ia
 from page_riwayat import render_riwayat
+from page_arsip import render_arsip # PASTIKAN IMPORT INI ADA
 
-st.set_page_config(page_title="Generator Naskah Hukum Unmul", layout="wide")
+st.set_page_config(page_title="Sistem Naskah Hukum Unmul", layout="wide")
 
-# 1. Inisialisasi Database
+# Inisialisasi Database
 init_db()
 
-# 2. Inisialisasi AI
+# Konfigurasi AI
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except KeyError:
@@ -26,14 +27,15 @@ def get_ai_model():
 
 model = get_ai_model()
 
-# 3. Navigasi Sidebar
+# --- NAVIGASI MULTI-MODUL ---
 st.sidebar.title("Sistem Naskah Kerja Sama")
 st.sidebar.markdown("Universitas Mulawarman")
 
 if 'menu_aktif' not in st.session_state:
     st.session_state.menu_aktif = "📝 Modul PKS (Induk)"
 
-menu_options = ["📝 Modul PKS (Induk)", "⚙️ Modul IA (Turunan)", "📂 Riwayat & Database"]
+# PASTIKAN MENU ARSIP ADA DI DALAM LIST INI
+menu_options = ["📝 Modul PKS (Induk)", "⚙️ Modul IA (Turunan)", "📂 Riwayat & Database", "🗄️ Arsip Otomatis"]
 current_idx = menu_options.index(st.session_state.menu_aktif)
 
 menu = st.sidebar.radio("Navigasi Modul:", menu_options, index=current_idx)
@@ -42,10 +44,12 @@ if menu != st.session_state.menu_aktif:
     st.session_state.menu_aktif = menu
     st.rerun()
 
-# 4. Routing Halaman
+# --- ROUTING HALAMAN ---
 if menu == "📝 Modul PKS (Induk)":
     render_pks(model)
 elif menu == "⚙️ Modul IA (Turunan)":
     render_ia(model)
 elif menu == "📂 Riwayat & Database":
     render_riwayat()
+elif menu == "🗄️ Arsip Otomatis": # LOGIKA PEMANGGILAN HALAMAN ARSIP
+    render_arsip()
