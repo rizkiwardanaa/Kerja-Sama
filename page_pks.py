@@ -50,7 +50,7 @@ def render_pks(model):
         with st.expander("1. Form Data PKS", expanded=True):
             col1, col2 = st.columns(2)
             with col1:
-                logo_mitra = st.file_uploader("Unggah Logo Mitra (PKS)", type=["png", "jpg"])
+                logo_mitra = st.file_uploader("Unggah Logo Mitra (PKS)", type=["png", "jpg", "jpeg"])
                 judul_ks = st.text_input("Judul Kerja Sama", value=get_val('judul_ks', "TRIDHARMA PERGURUAN TINGGI"))
                 no_unit_unmul = st.text_input("Nomor Surat Pihak 1 (Unmul)", value=get_val('no_unit_unmul', ""))
                 
@@ -62,17 +62,17 @@ def render_pks(model):
                 nama_p1 = st.text_input("Nama Pejabat P1", value=get_val('nama_p1', "Prof. Dr. M. Bahri Arifin, M.Hum"))
                 jabatan_p1 = st.text_input("Jabatan P1", value=get_val('jabatan_p1', "Dekan Fakultas Ilmu Budaya"))
                 lembaga_p1 = st.text_input("Nama Lembaga P1", value=get_val('lembaga_p1', "Fakultas Ilmu Budaya Universitas Mulawarman"))
-                alamat_p1 = st.text_area("Alamat Lembaga P1", value=get_val('alamat_p1', ""))
+                alamat_p1 = st.text_area("Alamat Lembaga P1", value=get_val('alamat_p1', "Jl. Ki Hajar Dewantara, Gunung Kelua, Samarinda, Kalimantan Timur 75123"))
                 nip_p1 = st.text_input("NIP P1", value=get_val('nip_p1', ""))
 
             with col2:
                 no_mitra = st.text_input("Nomor Surat Pihak 2 (Mitra)", value=get_val('no_mitra', ""))
                 
                 st.subheader("Pihak 2 (Mitra)")
-                nama_mitra = st.text_input("Nama Instansi Mitra", value=get_val('nama_mitra', ""))
-                nama_p2 = st.text_input("Nama Pejabat P2", value=get_val('nama_p2', ""))
-                jabatan_p2 = st.text_input("Jabatan P2", value=get_val('jabatan_p2', ""))
-                alamat_mitra = st.text_area("Alamat Mitra", value=get_val('alamat_mitra', ""))
+                nama_mitra = st.text_input("Nama Instansi Mitra", value=get_val('nama_mitra', "INSTITUT SENI INDONESIA YOGYAKARTA"))
+                nama_p2 = st.text_input("Nama Pejabat P2", value=get_val('nama_p2', "Dr. I Nyoman Cau Arsana, S.Sn., M.Hum"))
+                jabatan_p2 = st.text_input("Jabatan P2", value=get_val('jabatan_p2', "Dekan Fakultas Seni Pertunjukan"))
+                alamat_mitra = st.text_area("Alamat Mitra", value=get_val('alamat_mitra', "Jl. Parangtritis Km. 6.5 Sewon Bantul Yogyakarta"))
                 nip_p2 = st.text_input("NIP P2", value=get_val('nip_p2', ""))
                 
                 st.subheader("Detail untuk AI")
@@ -155,7 +155,9 @@ def render_pks(model):
             for t in ["PERJANJIAN KERJA SAMA", "ANTARA", lembaga_p1.upper(), "UNIVERSITAS MULAWARMAN", "DENGAN", nama_mitra.upper(), "", "TENTANG", judul_ks.upper(), "", f"Nomor : {no_unit_unmul}", f"Nomor : {no_mitra}"]:
                 pdf.cell(0, 6, t, 0, 1, 'C') if t else pdf.ln(5)
             
-            pdf.ln(10); pdf.set_font("Arial", '', 11); pdf.multi_cell(0, 6, teks_pembuka.encode('latin-1', 'replace').decode('latin-1'), align='J'); pdf.ln(5)
+            # Format rata kiri sesuai permintaan
+            pdf.ln(10); pdf.set_font("Arial", '', 11); pdf.multi_cell(0, 6, teks_pembuka.encode('latin-1', 'replace').decode('latin-1'), align='L'); pdf.ln(5)
+            
             for jdl, isi in st.session_state.pks_json.items():
                 pdf.set_font("Arial", 'B', 11)
                 if ":" in jdl:
@@ -164,7 +166,9 @@ def render_pks(model):
                 pdf.set_font("Arial", '', 11); pdf.multi_cell(0, 6, isi.encode('latin-1', 'replace').decode('latin-1'), align='J'); pdf.ln(5)
             
             pdf.ln(10); pdf.set_font("Arial", 'B', 11); pdf.set_x(25); pdf.cell(80, 5, 'PIHAK KESATU,', 0, 0, 'L'); pdf.cell(80, 5, 'PIHAK KEDUA,', 0, 1, 'L'); pdf.ln(25)
+            # Tanpa underline
             pdf.set_font("Arial", '', 11); pdf.set_x(25); pdf.cell(80, 5, nama_p1, 0, 0, 'L'); pdf.cell(80, 5, nama_p2, 0, 1, 'L')
+            # NIP Bold
             pdf.set_font("Arial", 'B', 11); pdf.set_x(25); pdf.cell(80, 5, f'NIP {nip_p1}', 0, 0, 'L'); pdf.cell(80, 5, f'NIP {nip_p2}' if nip_p2 else '', 0, 1, 'L')
             
             pdf.output("Draft_PKS.pdf")
