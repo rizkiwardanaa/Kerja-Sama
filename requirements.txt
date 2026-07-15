@@ -3,3 +3,5 @@ google-generativeai
 psycopg2-binary
 fpdf
 pandas
+openpyxl
+requests
