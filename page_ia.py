@@ -13,7 +13,6 @@ def render_ia(model):
     if 'ia_json' not in st.session_state: st.session_state.ia_json = {}
     if 'ia_pdf_ready' not in st.session_state: st.session_state.ia_pdf_ready = False
     
-    # 1. Pilih PKS Induk
     conn = get_db_connection()
     df_pks = pd.read_sql("SELECT id, judul_ks, nama_mitra, form_data FROM dokumen_pks ORDER BY tanggal_dibuat DESC", conn)
     conn.close()
@@ -44,16 +43,15 @@ def render_ia(model):
             pic_jabatan_p1 = st.text_input("First Party Title", placeholder="Rector of the Uzbek...")
         with col2:
             judul_ia = st.text_input("IA Subject/Title", placeholder="Implementation of Academic Collaboration")
-            st.write("") # spacing
+            st.write("") 
             st.write("")
             
             st.subheader("Second Party (Unmul)")
             pic_nama_p2 = st.text_input("Second Party PIC Name", placeholder="Dr. Ahmad Mubarok")
             pic_jabatan_p2 = st.text_input("Second Party Title", placeholder="Head of Indonesian Literature Department")
             
-        detail = st.text_area("Activity Details (Prompt untuk AI)", placeholder="Jelaskan secara ringkas kegiatan, objektif, pendanaan, dsb dalam bahasa Indonesia atau Inggris...")
+        detail = st.text_area("Activity Details (Prompt AI)", placeholder="Jelaskan secara ringkas kegiatan, objektif, pendanaan, dsb dalam bahasa Indonesia atau Inggris...")
         
-        # Teks Pembuka Statis Inggris
         teks_pembuka = f"This Implementation of Arrangements is developed as a derivative of the Cooperation Agreement between {form_pks.get('nama_mitra', '')} and the {form_pks.get('lembaga_p1', 'Faculty')}, Mulawarman University, specifically for collaborative activities involving the {prodi_unmul} at Mulawarman University."
 
         btn_gen = st.form_submit_button("Generate AI Sections (English)", type="primary")
@@ -70,7 +68,6 @@ def render_ia(model):
             with cs: btn_save = st.form_submit_button("Simpan IA")
             with cp: btn_pdf = st.form_submit_button("Siapkan PDF IA")
 
-    # LOGIKA
     if btn_gen:
         with st.spinner("AI is generating English sections..."):
             prompt = f"""
@@ -100,7 +97,7 @@ def render_ia(model):
             conn = get_db_connection()
             cur = conn.cursor()
             cur.execute("INSERT INTO dokumen_ia (pks_id, judul_ia, tanggal_dibuat, isi_dokumen, form_data) VALUES (%s, %s, %s, %s, %s)", (pks_id, judul_ia, datetime.now(), full_doc, json.dumps(data_ia)))
-            conn.commit(); conn.close()
+            conn.commit(); cur.close(); conn.close()
             st.success("IA Tersimpan!")
         except Exception as e: st.error(f"DB Error: {e}")
 
@@ -113,7 +110,6 @@ def render_ia(model):
 
             pdf = PDF_IA('P', 'mm', 'A4'); pdf.add_page(); pdf.set_auto_page_break(True, 20); pdf.set_margins(25, 20, 25)
             
-            # Header IA
             pdf.set_font("Arial", 'B', 12)
             for t in ["IMPLEMENTATION OF ARRANGEMENTS", f"BETWEEN {form_pks.get('nama_mitra', '').upper()}", "AND", f"{form_pks.get('lembaga_p1', 'FACULTY').upper()}, MULAWARMAN UNIVERSITY", f"SPECIFIC TO THE {prodi_unmul.upper()}", "", f"Number: {no_ia}"]:
                 pdf.cell(0, 6, t, 0, 1, 'C') if t else pdf.ln(5)
@@ -124,35 +120,19 @@ def render_ia(model):
             pdf.ln(5)
             
             for jdl, isi in edited_ia.items():
-                pdf.set_font("Arial", 'B', 11)
-                pdf.multi_cell(0, 6, jdl, align='L') # Judul rata kiri
-                pdf.set_font("Arial", '', 11)
-                pdf.multi_cell(0, 6, isi.encode('latin-1', 'replace').decode('latin-1'), align='J')
+                pdf.set_font("Arial", 'B', 11); pdf.multi_cell(0, 6, jdl, align='L')
+                pdf.set_font("Arial", '', 11); pdf.multi_cell(0, 6, isi.encode('latin-1', 'replace').decode('latin-1'), align='J')
                 pdf.ln(5)
             
-            # Format Tanda Tangan Atas Bawah (Sesuai Referensi)
-            pdf.ln(10)
-            pdf.set_font("Arial", '', 11)
-            pdf.cell(0, 6, f"Signed on {tgl_ia_str},", 0, 1, 'L')
-            pdf.ln(5)
+            pdf.ln(10); pdf.set_font("Arial", '', 11); pdf.cell(0, 6, f"Signed on {tgl_ia_str},", 0, 1, 'L'); pdf.ln(5)
             
-            pdf.cell(0, 6, "First Party:", 0, 1, 'L')
-            pdf.cell(0, 6, form_pks.get('nama_mitra', ''), 0, 1, 'L')
-            pdf.ln(20) # Ruang TTD
-            pdf.set_font("Arial", 'B', 11)
-            pdf.cell(0, 6, pic_nama_p1, 0, 1, 'L')
-            pdf.set_font("Arial", '', 11)
-            pdf.cell(0, 6, pic_jabatan_p1, 0, 1, 'L')
+            pdf.cell(0, 6, "First Party:", 0, 1, 'L'); pdf.cell(0, 6, form_pks.get('nama_mitra', ''), 0, 1, 'L'); pdf.ln(20)
+            pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, pic_nama_p1, 0, 1, 'L')
+            pdf.set_font("Arial", '', 11); pdf.cell(0, 6, pic_jabatan_p1, 0, 1, 'L'); pdf.ln(10)
             
-            pdf.ln(10)
-            
-            pdf.cell(0, 6, "Second Party:", 0, 1, 'L')
-            pdf.cell(0, 6, f"The {prodi_unmul}, {form_pks.get('lembaga_p1', '')}, Mulawarman University", 0, 1, 'L')
-            pdf.ln(20) # Ruang TTD (termasuk area materai jika ada)
-            pdf.set_font("Arial", 'B', 11)
-            pdf.cell(0, 6, pic_nama_p2, 0, 1, 'L')
-            pdf.set_font("Arial", '', 11)
-            pdf.cell(0, 6, pic_jabatan_p2, 0, 1, 'L')
+            pdf.cell(0, 6, "Second Party:", 0, 1, 'L'); pdf.cell(0, 6, f"The {prodi_unmul}, {form_pks.get('lembaga_p1', '')}, Mulawarman University", 0, 1, 'L'); pdf.ln(20)
+            pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, pic_nama_p2, 0, 1, 'L')
+            pdf.set_font("Arial", '', 11); pdf.cell(0, 6, pic_jabatan_p2, 0, 1, 'L')
             
             pdf.output("Draft_IA.pdf")
             st.session_state.ia_pdf_ready = True
