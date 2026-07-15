@@ -1,19 +1,21 @@
 import streamlit as st
 import google.generativeai as genai
+import os
 from db_config import init_db
 from page_pks import render_pks
 from page_ia import render_ia
 from page_riwayat import render_riwayat
-from page_arsip import render_arsip # PASTIKAN IMPORT INI ADA
+from page_arsip import render_arsip
 
 st.set_page_config(page_title="Sistem Naskah Hukum Unmul", layout="wide")
 
-# Inisialisasi Database
 init_db()
 
-# Konfigurasi AI
+# --- HARD OVERRIDE API KEY ---
 try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    API_KEY = st.secrets["GEMINI_API_KEY"].strip().strip('"').strip("'")
+    os.environ["GOOGLE_API_KEY"] = API_KEY
+    genai.configure(api_key=API_KEY)
 except KeyError:
     st.error("API Key Gemini tidak ditemukan di st.secrets.")
     st.stop()
@@ -34,7 +36,6 @@ st.sidebar.markdown("Universitas Mulawarman")
 if 'menu_aktif' not in st.session_state:
     st.session_state.menu_aktif = "📝 Modul PKS (Induk)"
 
-# PASTIKAN MENU ARSIP ADA DI DALAM LIST INI
 menu_options = ["📝 Modul PKS (Induk)", "⚙️ Modul IA (Turunan)", "📂 Riwayat & Database", "🗄️ Arsip Otomatis"]
 current_idx = menu_options.index(st.session_state.menu_aktif)
 
@@ -51,5 +52,5 @@ elif menu == "⚙️ Modul IA (Turunan)":
     render_ia(model)
 elif menu == "📂 Riwayat & Database":
     render_riwayat()
-elif menu == "🗄️ Arsip Otomatis": # LOGIKA PEMANGGILAN HALAMAN ARSIP
+elif menu == "🗄️ Arsip Otomatis":
     render_arsip()
