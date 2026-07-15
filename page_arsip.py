@@ -4,11 +4,29 @@ import json
 import hashlib
 import tempfile
 import os
+import re
+import time
 import psycopg2
 import google.generativeai as genai
 from datetime import datetime
 from fpdf import FPDF
 from db_config import get_db_connection
+
+# --- 1. AUTO-STRIPPING API KEY ---
+# Membersihkan API key dari kemungkinan spasi atau tanda kutip tak sengaja di file secrets
+RAW_API_KEY = st.secrets.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
+genai.configure(api_key=RAW_API_KEY)
+
+# --- 2. FUNGSI SENSOR ERROR (AUTO-REDACT) ---
+def sanitize_error(error_obj):
+    """Menyensor API Key dari pesan error mentah agar tidak terekspos di UI"""
+    err_str = str(error_obj)
+    # Sensor pola URL yang mengandung 'key=...'
+    err_str = re.sub(r'key=[a-zA-Z0-9_\.\-]+', 'key=***REDACTED***', err_str)
+    # Sensor string API key secara langsung (jika muncul di tempat lain)
+    if RAW_API_KEY and len(RAW_API_KEY) > 5:
+        err_str = err_str.replace(RAW_API_KEY, "***REDACTED***")
+    return err_str
 
 def render_arsip():
     st.title("🗄️ Arsip & Ekstraksi Dokumen Otomatis")
@@ -36,54 +54,84 @@ def render_arsip():
                 progress_bar.progress((i + 1) / total_files)
                 continue
                 
-            with st.spinner(f"Mengekstrak data dari {file.name}..."):
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(file_bytes)
-                        tmp_path = tmp.name
-                    
-                    gemini_file = genai.upload_file(tmp_path, mime_type="application/pdf")
-                    
-                    prompt = """
-                    Baca dokumen ini. Ekstrak informasi berikut dan berikan HANYA dalam format JSON murni tanpa markdown.
-                    Jika data tidak ditemukan, isi dengan "Tidak ada".
-                    Gunakan struktur JSON ini:
-                    {
-                        "jenis_dokumen": "PKS atau IA",
-                        "nomor_dokumen": "Nomor surat dokumen tersebut",
-                        "nama_mitra": "Nama institusi mitra",
-                        "tanggal_mulai": "Tanggal mulai penandatanganan",
-                        "tanggal_selesai": "Tanggal berakhirnya kerja sama"
-                    }
-                    """
-                    model = genai.GenerativeModel('gemini-1.5-flash')
-                    response = model.generate_content([gemini_file, prompt])
-                    
-                    raw_json = response.text.replace('```json', '').replace('```', '').strip()
-                    data_ekstrak = json.loads(raw_json)
-                    
-                    cur.execute("""
-                        INSERT INTO arsip_dokumen 
-                        (file_hash, jenis_dokumen, nomor_dokumen, nama_mitra, tgl_mulai, tgl_selesai, file_pdf, tanggal_diunggah) 
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        file_hash, 
-                        data_ekstrak.get('jenis_dokumen', '-'),
-                        data_ekstrak.get('nomor_dokumen', '-'),
-                        data_ekstrak.get('nama_mitra', '-'),
-                        data_ekstrak.get('tanggal_mulai', '-'),
-                        data_ekstrak.get('tanggal_selesai', '-'),
-                        psycopg2.Binary(file_bytes),
-                        datetime.now()
-                    ))
-                    conn.commit()
-                    berhasil += 1
-                    
-                    genai.delete_file(gemini_file.name)
-                    os.remove(tmp_path)
-                    
-                except Exception as e:
-                    st.error(f"Gagal memproses {file.name}: {e}")
+            with st.status(f"Mengekstrak data dari '{file.name}'...", expanded=False) as status_ui:
+                # --- 3. AUTO-RETRY MECHANISM ---
+                max_retries = 3
+                tmp_path = ""
+                gemini_file = None
+                
+                for attempt in range(max_retries):
+                    try:
+                        # Buat file sementara
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                            tmp.write(file_bytes)
+                            tmp_path = tmp.name
+                        
+                        st.write(f"Percobaan {attempt + 1}/{max_retries}: Mengunggah ke AI...")
+                        gemini_file = genai.upload_file(tmp_path, mime_type="application/pdf")
+                        
+                        st.write("Menganalisis isi dokumen...")
+                        prompt = """
+                        Baca dokumen ini. Ekstrak informasi berikut dan berikan HANYA dalam format JSON murni tanpa markdown.
+                        Jika data tidak ditemukan, isi dengan "Tidak ada".
+                        Gunakan struktur JSON ini:
+                        {
+                            "jenis_dokumen": "PKS atau IA",
+                            "nomor_dokumen": "Nomor surat dokumen tersebut",
+                            "nama_mitra": "Nama institusi mitra",
+                            "tanggal_mulai": "Tanggal mulai penandatanganan",
+                            "tanggal_selesai": "Tanggal berakhirnya kerja sama"
+                        }
+                        """
+                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        response = model.generate_content([gemini_file, prompt])
+                        
+                        raw_json = response.text.replace('```json', '').replace('```', '').strip()
+                        data_ekstrak = json.loads(raw_json)
+                        
+                        st.write("Menyimpan ke database...")
+                        cur.execute("""
+                            INSERT INTO arsip_dokumen 
+                            (file_hash, jenis_dokumen, nomor_dokumen, nama_mitra, tgl_mulai, tgl_selesai, file_pdf, tanggal_diunggah) 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            file_hash, 
+                            data_ekstrak.get('jenis_dokumen', '-'),
+                            data_ekstrak.get('nomor_dokumen', '-'),
+                            data_ekstrak.get('nama_mitra', '-'),
+                            data_ekstrak.get('tanggal_mulai', '-'),
+                            data_ekstrak.get('tanggal_selesai', '-'),
+                            psycopg2.Binary(file_bytes),
+                            datetime.now()
+                        ))
+                        conn.commit()
+                        berhasil += 1
+                        status_ui.update(label=f"Selesai: {file.name}", state="complete")
+                        
+                        break # Keluar dari loop retry jika berhasil
+                        
+                    except Exception as e:
+                        error_msg = sanitize_error(e)
+                        st.write(f"Gagal pada percobaan {attempt + 1}. Detail: {error_msg}")
+                        
+                        if attempt < max_retries - 1:
+                            time.sleep(2) # Jeda 2 detik sebelum mencoba lagi
+                        else:
+                            status_ui.update(label=f"Gagal memproses {file.name}", state="error")
+                            st.error(f"Gagal mengekstrak '{file.name}' setelah {max_retries} percobaan. \n\n**Log Sistem:** {error_msg}")
+                            
+                    finally:
+                        # --- PEMBERSIHAN AMAN (SAFE CLEANUP) ---
+                        if gemini_file:
+                            try:
+                                genai.delete_file(gemini_file.name)
+                            except:
+                                pass
+                        if os.path.exists(tmp_path):
+                            try:
+                                os.remove(tmp_path)
+                            except:
+                                pass
             
             progress_bar.progress((i + 1) / total_files)
             
