@@ -1,6 +1,5 @@
 import psycopg2
 import streamlit as st
-from psycopg2.errors import DuplicateColumn
 
 def get_db_connection():
     return psycopg2.connect(st.secrets["NEON_CONNECTION_STRING"])
@@ -10,7 +9,7 @@ def init_db():
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # 1. Tabel PKS (Induk)
+        # Tabel PKS
         cur.execute("""
             CREATE TABLE IF NOT EXISTS dokumen_pks (
                 id SERIAL PRIMARY KEY,
@@ -22,7 +21,7 @@ def init_db():
             )
         """)
         
-        # 2. Tabel IA (Turunan)
+        # Tabel IA
         cur.execute("""
             CREATE TABLE IF NOT EXISTS dokumen_ia (
                 id SERIAL PRIMARY KEY,
@@ -34,7 +33,7 @@ def init_db():
             )
         """)
         
-        # 3. Tabel Ekstraksi & Arsip PDF
+        # Tabel Arsip
         cur.execute("""
             CREATE TABLE IF NOT EXISTS arsip_dokumen (
                 id SERIAL PRIMARY KEY,
@@ -48,16 +47,23 @@ def init_db():
                 tanggal_diunggah TIMESTAMP
             )
         """)
-        
         conn.commit()
         
-        # Pengecekan aman untuk penambahan kolom jika update dari versi lama
-        try:
-            cur.execute("ALTER TABLE dokumen_pks ADD COLUMN form_data TEXT")
-            conn.commit()
-        except DuplicateColumn:
-            conn.rollback()
-            
+        # --- MIGRASI DATA OTOMATIS ---
+        # Menambahkan kolom prodi & koordinator tanpa menghapus tabel lama
+        alter_queries = [
+            "ALTER TABLE dokumen_pks ADD COLUMN form_data TEXT",
+            "ALTER TABLE arsip_dokumen ADD COLUMN prodi VARCHAR(255)",
+            "ALTER TABLE arsip_dokumen ADD COLUMN koor_prodi VARCHAR(255)"
+        ]
+        
+        for query in alter_queries:
+            try:
+                cur.execute(query)
+                conn.commit()
+            except Exception:
+                conn.rollback() # Jika kolom sudah ada, abaikan error dan lanjut
+                
         cur.close()
         conn.close()
     except Exception as e:
