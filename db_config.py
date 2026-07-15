@@ -10,7 +10,7 @@ def init_db():
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Tabel PKS
+        # 1. Tabel PKS (Induk)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS dokumen_pks (
                 id SERIAL PRIMARY KEY,
@@ -22,7 +22,7 @@ def init_db():
             )
         """)
         
-        # Tabel IA
+        # 2. Tabel IA (Turunan)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS dokumen_ia (
                 id SERIAL PRIMARY KEY,
@@ -34,7 +34,30 @@ def init_db():
             )
         """)
         
+        # 3. Tabel Ekstraksi & Arsip PDF
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS arsip_dokumen (
+                id SERIAL PRIMARY KEY,
+                file_hash VARCHAR(255) UNIQUE,
+                jenis_dokumen VARCHAR(50),
+                nomor_dokumen VARCHAR(255),
+                nama_mitra VARCHAR(255),
+                tgl_mulai VARCHAR(50),
+                tgl_selesai VARCHAR(50),
+                file_pdf BYTEA,
+                tanggal_diunggah TIMESTAMP
+            )
+        """)
+        
         conn.commit()
+        
+        # Pengecekan aman untuk penambahan kolom jika update dari versi lama
+        try:
+            cur.execute("ALTER TABLE dokumen_pks ADD COLUMN form_data TEXT")
+            conn.commit()
+        except DuplicateColumn:
+            conn.rollback()
+            
         cur.close()
         conn.close()
     except Exception as e:
