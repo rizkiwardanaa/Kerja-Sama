@@ -4,41 +4,76 @@ import json
 import hashlib
 import tempfile
 import os
-import re
-import time
+import requests
+import base64
 import psycopg2
-import google.generativeai as genai
 from datetime import datetime
 from fpdf import FPDF
 from db_config import get_db_connection
 
-# --- HARD OVERRIDE API KEY DI MODUL ARSIP ---
-try:
-    API_KEY = st.secrets["GEMINI_API_KEY"].strip().strip('"').strip("'")
-    os.environ["GOOGLE_API_KEY"] = API_KEY
-    genai.configure(api_key=API_KEY)
-except Exception as e:
-    st.error(f"Gagal membaca file secrets: {e}")
-    API_KEY = "KUNCI_TIDAK_DITEMUKAN"
+# --- MENGAMBIL API KEY DARI SECRETS ---
+API_KEY = st.secrets.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 
-def sanitize_error(error_obj):
-    err_str = str(error_obj)
-    err_str = re.sub(r'key=[a-zA-Z0-9_\.\-]+', 'key=***REDACTED***', err_str)
-    if API_KEY and len(API_KEY) > 5:
-        err_str = err_str.replace(API_KEY, "***REDACTED***")
-    return err_str
+def panggil_gemini_api(file_bytes, api_key):
+    """
+    Fungsi khusus untuk memanggil Gemini API menggunakan HTTP requests langsung.
+    Ini mengatasi masalah format API Key yang membutuhkan parameter key= di URL.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    headers = {'Content-Type': 'application/json'}
+    
+    # Mengonversi file PDF menjadi string base64
+    b64_file = base64.b64encode(file_bytes).decode('utf-8')
+    
+    # Membuat payload JSON sesuai dokumentasi REST API Gemini
+    payload = {
+        "contents": [{
+            "parts": [
+                {
+                    "text": """
+                    Baca dokumen ini. Ekstrak informasi berikut dan berikan HANYA dalam format JSON murni tanpa markdown.
+                    Jika data tidak ditemukan, isi dengan "Tidak ada".
+                    Gunakan struktur JSON ini:
+                    {
+                        "jenis_dokumen": "PKS atau IA",
+                        "nomor_dokumen": "Nomor surat dokumen tersebut",
+                        "nama_mitra": "Nama institusi mitra",
+                        "tanggal_mulai": "Tanggal mulai penandatanganan",
+                        "tanggal_selesai": "Tanggal berakhirnya kerja sama"
+                    }
+                    """
+                },
+                {
+                    "inline_data": {
+                        "mime_type": "application/pdf", 
+                        "data": b64_file
+                    }
+                }
+            ]
+        }]
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    
+    # Memeriksa apakah permintaan ditolak oleh Google
+    if response.status_code != 200:
+        raise Exception(f"Error {response.status_code} dari Google: {response.text}")
+        
+    return response.json()
+
 
 def render_arsip():
     st.title("🗄️ Arsip & Ekstraksi Dokumen Otomatis")
-    
-    # TAMBAHKAN BARIS INI UNTUK DEBUGGING (Bisa dihapus nanti jika sudah berhasil)
-    st.warning(f"🔍 DEBUG INFO: Kunci API yang ditarik oleh sistem berawalan: **{API_KEY[:10]}...**")
-    
     st.write("Unggah file PDF PKS atau IA. Sistem akan membaca isinya, mengekstrak data penting, dan menyimpannya ke database.")
 
+    # --- 1. FITUR UPLOAD MASSAL ---
     uploaded_files = st.file_uploader("Unggah Dokumen (Bisa lebih dari 1 file)", type=["pdf"], accept_multiple_files=True)
     
     if st.button("Proses & Ekstrak Data", type="primary") and uploaded_files:
+        if not API_KEY:
+            st.error("API Key belum dikonfigurasi di st.secrets.")
+            st.stop()
+            
         conn = get_db_connection()
         cur = conn.cursor()
         
@@ -51,6 +86,7 @@ def render_arsip():
             file_bytes = file.read()
             file_hash = hashlib.sha256(file_bytes).hexdigest()
             
+            # Cek apakah file sudah pernah diunggah sebelumnya
             cur.execute("SELECT id FROM arsip_dokumen WHERE file_hash = %s", (file_hash,))
             if cur.fetchone():
                 duplikat += 1
@@ -58,78 +94,40 @@ def render_arsip():
                 continue
                 
             with st.status(f"Mengekstrak data dari '{file.name}'...", expanded=False) as status_ui:
-                max_retries = 3
-                tmp_path = ""
-                gemini_file = None
-                
-                for attempt in range(max_retries):
-                    try:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                            tmp.write(file_bytes)
-                            tmp_path = tmp.name
-                        
-                        st.write(f"Percobaan {attempt + 1}/{max_retries}: Mengunggah ke AI...")
-                        gemini_file = genai.upload_file(tmp_path, mime_type="application/pdf")
-                        
-                        st.write("Menganalisis isi dokumen...")
-                        prompt = """
-                        Baca dokumen ini. Ekstrak informasi berikut dan berikan HANYA dalam format JSON murni tanpa markdown.
-                        Jika data tidak ditemukan, isi dengan "Tidak ada".
-                        Gunakan struktur JSON ini:
-                        {
-                            "jenis_dokumen": "PKS atau IA",
-                            "nomor_dokumen": "Nomor surat dokumen tersebut",
-                            "nama_mitra": "Nama institusi mitra",
-                            "tanggal_mulai": "Tanggal mulai penandatanganan",
-                            "tanggal_selesai": "Tanggal berakhirnya kerja sama"
-                        }
-                        """
-                        model = genai.GenerativeModel('gemini-1.5-flash')
-                        response = model.generate_content([gemini_file, prompt])
-                        
-                        raw_json = response.text.replace('```json', '').replace('```', '').strip()
-                        data_ekstrak = json.loads(raw_json)
-                        
-                        st.write("Menyimpan ke database...")
-                        cur.execute("""
-                            INSERT INTO arsip_dokumen 
-                            (file_hash, jenis_dokumen, nomor_dokumen, nama_mitra, tgl_mulai, tgl_selesai, file_pdf, tanggal_diunggah) 
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """, (
-                            file_hash, 
-                            data_ekstrak.get('jenis_dokumen', '-'),
-                            data_ekstrak.get('nomor_dokumen', '-'),
-                            data_ekstrak.get('nama_mitra', '-'),
-                            data_ekstrak.get('tanggal_mulai', '-'),
-                            data_ekstrak.get('tanggal_selesai', '-'),
-                            psycopg2.Binary(file_bytes),
-                            datetime.now()
-                        ))
-                        conn.commit()
-                        berhasil += 1
-                        status_ui.update(label=f"Selesai: {file.name}", state="complete")
-                        
-                        break 
-                        
-                    except Exception as e:
-                        error_msg = sanitize_error(e)
-                        st.write(f"Gagal pada percobaan {attempt + 1}. Detail: {error_msg}")
-                        
-                        if attempt < max_retries - 1:
-                            time.sleep(2) 
-                        else:
-                            status_ui.update(label=f"Gagal memproses {file.name}", state="error")
-                            st.error(f"Gagal mengekstrak '{file.name}' setelah {max_retries} percobaan. \n\n**Log Sistem:** {error_msg}")
-                            
-                    finally:
-                        if gemini_file:
-                            try:
-                                genai.delete_file(gemini_file.name)
-                            except: pass
-                        if os.path.exists(tmp_path):
-                            try:
-                                os.remove(tmp_path)
-                            except: pass
+                try:
+                    st.write("Mengirim dokumen ke AI Gemini...")
+                    result_json = panggil_gemini_api(file_bytes, API_KEY)
+                    
+                    st.write("Memproses respons AI...")
+                    res_text = result_json['candidates'][0]['content']['parts'][0]['text']
+                    
+                    # Membersihkan teks dari format markdown JSON
+                    clean_json = res_text.replace('```json', '').replace('```', '').strip()
+                    data_ekstrak = json.loads(clean_json)
+                    
+                    st.write("Menyimpan ke database...")
+                    cur.execute("""
+                        INSERT INTO arsip_dokumen 
+                        (file_hash, jenis_dokumen, nomor_dokumen, nama_mitra, tgl_mulai, tgl_selesai, file_pdf, tanggal_diunggah) 
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        file_hash, 
+                        data_ekstrak.get('jenis_dokumen', '-'),
+                        data_ekstrak.get('nomor_dokumen', '-'),
+                        data_ekstrak.get('nama_mitra', '-'),
+                        data_ekstrak.get('tanggal_mulai', '-'),
+                        data_ekstrak.get('tanggal_selesai', '-'),
+                        psycopg2.Binary(file_bytes),
+                        datetime.now()
+                    ))
+                    conn.commit()
+                    berhasil += 1
+                    status_ui.update(label=f"Selesai: {file.name}", state="complete")
+                    
+                except Exception as e:
+                    # Menangkap error jaringan, JSON, atau penolakan API
+                    status_ui.update(label=f"Gagal memproses {file.name}", state="error")
+                    st.error(f"Gagal mengekstrak '{file.name}'. Detail: {str(e)}")
             
             progress_bar.progress((i + 1) / total_files)
             
@@ -139,12 +137,14 @@ def render_arsip():
         
     st.markdown("---")
 
+    # --- 2. DASHBOARD & TABEL REKAPITULASI ---
     st.subheader("📋 Database Arsip Kerja Sama")
     
     conn = get_db_connection()
     df_arsip = pd.read_sql("SELECT id, jenis_dokumen, nomor_dokumen, nama_mitra, tgl_mulai, tgl_selesai FROM arsip_dokumen ORDER BY tanggal_diunggah DESC", conn)
     
     if not df_arsip.empty:
+        # Fitur Cetak Rekapitulasi PDF
         if st.button("Unduh Rekapitulasi (PDF)"):
             pdf = FPDF(orientation='L', unit='mm', format='A4')
             pdf.add_page()
@@ -153,7 +153,11 @@ def render_arsip():
             pdf.ln(5)
             
             pdf.set_font("Arial", 'B', 10)
-            pdf.cell(20, 10, "Jenis", 1); pdf.cell(70, 10, "Nomor Dokumen", 1); pdf.cell(100, 10, "Nama Mitra", 1); pdf.cell(40, 10, "Mulai", 1); pdf.cell(40, 10, "Selesai", 1)
+            pdf.cell(20, 10, "Jenis", 1)
+            pdf.cell(70, 10, "Nomor Dokumen", 1)
+            pdf.cell(100, 10, "Nama Mitra", 1)
+            pdf.cell(40, 10, "Mulai", 1)
+            pdf.cell(40, 10, "Selesai", 1)
             pdf.ln()
             
             pdf.set_font("Arial", '', 9)
@@ -170,8 +174,14 @@ def render_arsip():
                 st.download_button("Klik untuk Simpan File Rekap", f, "Rekap_Arsip.pdf", "application/pdf")
         
         st.write("")
+        
+        # Header Tabel Tampilan UI
         h1, h2, h3, h4, h5 = st.columns([1, 2, 3, 2, 2])
-        h1.markdown("**Jenis**"); h2.markdown("**Nomor**"); h3.markdown("**Mitra**"); h4.markdown("**Masa Berlaku**"); h5.markdown("**File Dokumen**")
+        h1.markdown("**Jenis**")
+        h2.markdown("**Nomor**")
+        h3.markdown("**Mitra**")
+        h4.markdown("**Masa Berlaku**")
+        h5.markdown("**File Dokumen**")
         st.divider()
         
         cur = conn.cursor()
@@ -183,9 +193,14 @@ def render_arsip():
             c4.write(f"{row['tgl_mulai']} s.d {row['tgl_selesai']}")
             
             with c5:
-                if st.download_button(label="⬇️ Unduh PDF", data=b'', file_name="placeholder.pdf", key=f"btn_dl_{row['id']}"): pass 
+                # Tombol unduh spesifik untuk dokumen pada baris ini
+                if st.download_button(label="⬇️ Unduh PDF", data=b'', file_name="placeholder.pdf", key=f"btn_dl_{row['id']}"): 
+                    pass 
+                
+                # Mengambil data biner dari DB hanya untuk baris ini agar memori tidak berat
                 cur.execute("SELECT file_pdf FROM arsip_dokumen WHERE id = %s", (row['id'],))
                 pdf_data = cur.fetchone()[0]
+                
                 c5.empty()
                 c5.download_button(
                     label="⬇️ Unduh File",
@@ -197,4 +212,5 @@ def render_arsip():
         cur.close()
     else:
         st.info("Database arsip masih kosong. Silakan unggah dokumen di atas.")
+        
     conn.close()
