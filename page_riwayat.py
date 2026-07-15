@@ -8,7 +8,6 @@ def render_riwayat():
     
     tab_pks, tab_ia = st.tabs(["Riwayat PKS (Induk)", "Riwayat IA (Turunan)"])
     
-    # --- TAB PKS ---
     with tab_pks:
         st.subheader("Daftar Naskah PKS")
         try:
@@ -26,14 +25,14 @@ def render_riwayat():
                     c2.write(row['nama_mitra'])
                     c3.write(row['judul_ks'])
                     
-                    if ce.button("✏️", key=f"edit_pks_{row['id']}"):
+                    if ce.button("✏️ Edit", key=f"edit_pks_{row['id']}"):
                         st.session_state.pks_edit_id = row['id']
                         st.session_state.pks_edit_data = json.loads(row['form_data'])
                         st.session_state.pks_json = st.session_state.pks_edit_data.get('pasal_json', {})
                         st.session_state.menu_aktif = "📝 Modul PKS (Induk)"
                         st.rerun()
                         
-                    if cd.button("🗑️", key=f"del_pks_{row['id']}"):
+                    if cd.button("🗑️ Hapus", key=f"del_pks_{row['id']}"):
                         cur = conn.cursor()
                         cur.execute("DELETE FROM dokumen_pks WHERE id = %s", (row['id'],))
                         conn.commit(); cur.close()
@@ -42,11 +41,9 @@ def render_riwayat():
             else: st.info("Belum ada data PKS.")
         except Exception as e: st.error(f"Error Database: {e}")
 
-    # --- TAB IA ---
     with tab_ia:
         st.subheader("Daftar Naskah IA")
         try:
-            # Join table untuk mendapatkan nama mitra dari PKS
             query = """
                 SELECT a.id, a.judul_ia, a.tanggal_dibuat, b.nama_mitra 
                 FROM dokumen_ia a 
@@ -66,8 +63,7 @@ def render_riwayat():
                     c1.write(row['tanggal_dibuat'].strftime('%d-%m-%Y %H:%M'))
                     c2.write(row['nama_mitra'])
                     c3.write(row['judul_ia'])
-                    # Tombol aksi IA bisa dikembangkan lebih lanjut di sini
-                    if cd.button("🗑️", key=f"del_ia_{row['id']}"):
+                    if cd.button("🗑️ Hapus", key=f"del_ia_{row['id']}"):
                         conn = get_db_connection(); cur = conn.cursor()
                         cur.execute("DELETE FROM dokumen_ia WHERE id = %s", (row['id'],))
                         conn.commit(); cur.close(); conn.close()
