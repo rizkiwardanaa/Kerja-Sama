@@ -14,18 +14,51 @@ from db_config import get_db_connection
 # --- MENGAMBIL API KEY DARI SECRETS ---
 API_KEY = st.secrets.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 
+def get_available_models(api_key):
+    """
+    Bertanya langsung ke server Google untuk mendapatkan daftar seluruh model
+    yang saat ini aktif dan bisa digunakan untuk generateContent.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            # Saring hanya model yang mendukung pembuatan konten dan keluarga gemini
+            valid_models = [
+                m['name'] for m in data.get('models', []) 
+                if 'generateContent' in m.get('supportedGenerationMethods', [])
+                and 'gemini' in m['name']
+            ]
+            
+            # Urutkan prioritas: 1.5-flash (cepat/murah) -> 1.5-pro (pintar) -> versi 1.0/lainnya
+            valid_models.sort(
+                key=lambda x: (
+                    '1.5-flash' in x,
+                    '1.5-pro' in x,
+                    'latest' in x
+                ), 
+                reverse=True
+            )
+            return valid_models
+        return []
+    except Exception:
+        # Jika gagal mengambil daftar, kembalikan daftar fallback manual yang paling umum
+        return [
+            'models/gemini-1.5-flash-latest', 
+            'models/gemini-1.5-pro-latest', 
+            'models/gemini-1.5-flash',
+            'models/gemini-pro'
+        ]
+
 def panggil_gemini_api(file_bytes, api_key):
     """
-    Fungsi khusus untuk memanggil Gemini API menggunakan HTTP requests langsung.
-    Ini mengatasi masalah format API Key yang membutuhkan parameter key= di URL.
+    Memanggil API dengan sistem "Pintar".
+    Otomatis mencari model yang tersedia dan pindah ke model lain jika kuota habis (429) atau tidak ditemukan (404).
     """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
-    
-    # Mengonversi file PDF menjadi string base64
     b64_file = base64.b64encode(file_bytes).decode('utf-8')
     
-    # Membuat payload JSON sesuai dokumentasi REST API Gemini
     payload = {
         "contents": [{
             "parts": [
@@ -53,14 +86,41 @@ def panggil_gemini_api(file_bytes, api_key):
         }]
     }
     
-    response = requests.post(url, headers=headers, json=payload)
-    
-    # Memeriksa apakah permintaan ditolak oleh Google
-    if response.status_code != 200:
-        raise Exception(f"Error {response.status_code} dari Google: {response.text}")
+    # 1. Dapatkan daftar model dinamis
+    available_models = get_available_models(api_key)
+    if not available_models:
+        available_models = ['models/gemini-1.5-flash-latest'] # Jaring pengaman terakhir
         
-    return response.json()
-
+    last_error_msg = ""
+    
+    # 2. Coba model satu per satu
+    for model_name in available_models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}"
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            
+            # Jika berhasil, langsung kembalikan datanya dan hentikan perulangan
+            if response.status_code == 200:
+                return response.json()
+            
+            # Jika Error 404 (Tidak Ditemukan), 429 (Limit Kuota), atau 503 (Server Down)
+            # Sistem tidak akan crash, melainkan mencatatnya dan pindah ke model berikutnya
+            if response.status_code in [404, 429, 503]:
+                last_error_msg = f"Model {model_name} dilewati (Kode {response.status_code})"
+                continue 
+                
+            # Jika error 400 (seperti API key invalid atau format data salah), tidak usah loop, langsung error
+            if response.status_code == 400:
+                raise Exception(f"Permintaan ditolak: {response.text}")
+                
+        except requests.exceptions.RequestException as e:
+            # Mengabaikan error koneksi (seperti timeout) dan coba model lain
+            last_error_msg = f"Koneksi ke {model_name} terputus."
+            continue
+            
+    # Jika seluruh loop habis dan tidak ada satu pun model yang berhasil
+    raise Exception(f"Semua model API Gemini kehabisan kuota atau gagal diakses. Error terakhir: {last_error_msg}")
 
 def render_arsip():
     st.title("🗄️ Arsip & Ekstraksi Dokumen Otomatis")
@@ -95,7 +155,7 @@ def render_arsip():
                 
             with st.status(f"Mengekstrak data dari '{file.name}'...", expanded=False) as status_ui:
                 try:
-                    st.write("Mengirim dokumen ke AI Gemini...")
+                    st.write("Mengirim dokumen ke AI Gemini dan mencari model tersedia...")
                     result_json = panggil_gemini_api(file_bytes, API_KEY)
                     
                     st.write("Memproses respons AI...")
