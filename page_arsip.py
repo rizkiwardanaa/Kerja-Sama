@@ -12,27 +12,25 @@ from datetime import datetime
 from fpdf import FPDF
 from db_config import get_db_connection
 
-# --- 1. AUTO-STRIPPING API KEY ---
-# Membersihkan API key dari kemungkinan spasi atau tanda kutip tak sengaja di file secrets
-RAW_API_KEY = st.secrets.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
-genai.configure(api_key=RAW_API_KEY)
+# --- HARD OVERRIDE API KEY DI MODUL ARSIP ---
+try:
+    API_KEY = st.secrets["GEMINI_API_KEY"].strip().strip('"').strip("'")
+    os.environ["GOOGLE_API_KEY"] = API_KEY
+    genai.configure(api_key=API_KEY)
+except:
+    API_KEY = ""
 
-# --- 2. FUNGSI SENSOR ERROR (AUTO-REDACT) ---
 def sanitize_error(error_obj):
-    """Menyensor API Key dari pesan error mentah agar tidak terekspos di UI"""
     err_str = str(error_obj)
-    # Sensor pola URL yang mengandung 'key=...'
     err_str = re.sub(r'key=[a-zA-Z0-9_\.\-]+', 'key=***REDACTED***', err_str)
-    # Sensor string API key secara langsung (jika muncul di tempat lain)
-    if RAW_API_KEY and len(RAW_API_KEY) > 5:
-        err_str = err_str.replace(RAW_API_KEY, "***REDACTED***")
+    if API_KEY and len(API_KEY) > 5:
+        err_str = err_str.replace(API_KEY, "***REDACTED***")
     return err_str
 
 def render_arsip():
     st.title("🗄️ Arsip & Ekstraksi Dokumen Otomatis")
     st.write("Unggah file PDF PKS atau IA. Sistem akan membaca isinya, mengekstrak data penting, dan menyimpannya ke database.")
 
-    # --- 1. FITUR UPLOAD MASSAL ---
     uploaded_files = st.file_uploader("Unggah Dokumen (Bisa lebih dari 1 file)", type=["pdf"], accept_multiple_files=True)
     
     if st.button("Proses & Ekstrak Data", type="primary") and uploaded_files:
@@ -55,14 +53,12 @@ def render_arsip():
                 continue
                 
             with st.status(f"Mengekstrak data dari '{file.name}'...", expanded=False) as status_ui:
-                # --- 3. AUTO-RETRY MECHANISM ---
                 max_retries = 3
                 tmp_path = ""
                 gemini_file = None
                 
                 for attempt in range(max_retries):
                     try:
-                        # Buat file sementara
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                             tmp.write(file_bytes)
                             tmp_path = tmp.name
@@ -108,30 +104,27 @@ def render_arsip():
                         berhasil += 1
                         status_ui.update(label=f"Selesai: {file.name}", state="complete")
                         
-                        break # Keluar dari loop retry jika berhasil
+                        break 
                         
                     except Exception as e:
                         error_msg = sanitize_error(e)
                         st.write(f"Gagal pada percobaan {attempt + 1}. Detail: {error_msg}")
                         
                         if attempt < max_retries - 1:
-                            time.sleep(2) # Jeda 2 detik sebelum mencoba lagi
+                            time.sleep(2) 
                         else:
                             status_ui.update(label=f"Gagal memproses {file.name}", state="error")
                             st.error(f"Gagal mengekstrak '{file.name}' setelah {max_retries} percobaan. \n\n**Log Sistem:** {error_msg}")
                             
                     finally:
-                        # --- PEMBERSIHAN AMAN (SAFE CLEANUP) ---
                         if gemini_file:
                             try:
                                 genai.delete_file(gemini_file.name)
-                            except:
-                                pass
+                            except: pass
                         if os.path.exists(tmp_path):
                             try:
                                 os.remove(tmp_path)
-                            except:
-                                pass
+                            except: pass
             
             progress_bar.progress((i + 1) / total_files)
             
@@ -141,7 +134,6 @@ def render_arsip():
         
     st.markdown("---")
 
-    # --- 2. DASHBOARD & TABEL REKAPITULASI ---
     st.subheader("📋 Database Arsip Kerja Sama")
     
     conn = get_db_connection()
