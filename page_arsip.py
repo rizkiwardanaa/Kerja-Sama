@@ -25,7 +25,14 @@ FOLDER_ID = st.secrets.get("DRIVE_FOLDER_ID", "")
 def upload_to_drive(file_bytes, file_name):
     """Mengunggah file ke Google Drive menggunakan Service Account dan mengembalikan URL."""
     try:
+        # Mengambil data dari secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
+        
+        # --- PERBAIKAN KRUSIAL DI SINI ---
+        # Memaksa teks literal '\n' berubah menjadi baris baru (newline) yang sah
+        creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
+        
+        # Melakukan autentikasi dengan kredensial yang sudah bersih
         creds = service_account.Credentials.from_service_account_info(
             creds_dict, scopes=['https://www.googleapis.com/auth/drive.file']
         )
