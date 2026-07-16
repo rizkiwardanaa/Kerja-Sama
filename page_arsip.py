@@ -22,14 +22,14 @@ API_KEY = st.secrets.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 FOLDER_ID = st.secrets.get("DRIVE_FOLDER_ID", "")
 
 # --- FUNGSI UPLOAD GOOGLE DRIVE ---
+# --- FUNGSI UPLOAD GOOGLE DRIVE ---
 def upload_to_drive(file_bytes, file_name):
     """Mengunggah file ke Google Drive menggunakan Service Account dan mengembalikan URL."""
     try:
         # Mengambil data dari secrets dan mengubahnya menjadi dictionary
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # PEMBERSIH UNIVERSAL: 
-        # Memastikan format newline (\n) diinterpretasikan dengan benar oleh pustaka kriptografi
+        # PEMBERSIH UNIVERSAL
         raw_key = creds_dict["private_key"]
         if "\\n" in raw_key:
             raw_key = raw_key.replace('\\n', '\n')
@@ -44,14 +44,22 @@ def upload_to_drive(file_bytes, file_name):
         file_metadata = {'name': file_name, 'parents': [FOLDER_ID]}
         media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/pdf', resumable=True)
         
-        # Eksekusi unggah file
-        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+        # --- PERBAIKAN: Tambahan supportsAllDrives=True ---
+        # Ini wajib agar robot diizinkan menaruh file di dalam "Drive Bersama" (Shared Drives)
+        file = service.files().create(
+            body=file_metadata, 
+            media_body=media, 
+            fields='id, webViewLink',
+            supportsAllDrives=True
+        ).execute()
+        
         file_id = file.get('id')
         
-        # Buka izin agar link bisa diakses publik
+        # Buka izin agar link bisa diakses publik melalui Drive Bersama
         service.permissions().create(
             fileId=file_id,
-            body={'type': 'anyone', 'role': 'reader'}
+            body={'type': 'anyone', 'role': 'reader'},
+            supportsAllDrives=True
         ).execute()
         
         return file.get('webViewLink')
