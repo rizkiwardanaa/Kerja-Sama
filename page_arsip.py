@@ -25,14 +25,17 @@ FOLDER_ID = st.secrets.get("DRIVE_FOLDER_ID", "")
 def upload_to_drive(file_bytes, file_name):
     """Mengunggah file ke Google Drive menggunakan Service Account dan mengembalikan URL."""
     try:
-        # Mengambil data dari secrets
+        # Mengambil data dari secrets dan mengubahnya menjadi dictionary
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # --- PERBAIKAN KRUSIAL DI SINI ---
-        # Memaksa teks literal '\n' berubah menjadi baris baru (newline) yang sah
-        creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
+        # PEMBERSIH UNIVERSAL: 
+        # Memastikan format newline (\n) diinterpretasikan dengan benar oleh pustaka kriptografi
+        raw_key = creds_dict["private_key"]
+        if "\\n" in raw_key:
+            raw_key = raw_key.replace('\\n', '\n')
+        creds_dict["private_key"] = raw_key
         
-        # Melakukan autentikasi dengan kredensial yang sudah bersih
+        # Autentikasi
         creds = service_account.Credentials.from_service_account_info(
             creds_dict, scopes=['https://www.googleapis.com/auth/drive.file']
         )
@@ -45,7 +48,7 @@ def upload_to_drive(file_bytes, file_name):
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         file_id = file.get('id')
         
-        # Buka izin agar siapapun yang punya link bisa melihat/mengunduh
+        # Buka izin agar link bisa diakses publik
         service.permissions().create(
             fileId=file_id,
             body={'type': 'anyone', 'role': 'reader'}
@@ -54,7 +57,6 @@ def upload_to_drive(file_bytes, file_name):
         return file.get('webViewLink')
     except Exception as e:
         raise Exception(f"Gagal mengunggah ke Google Drive: {str(e)}")
-
 # --- FUNGSI AI GEMINI (Tetap Sama) ---
 def get_available_models(api_key):
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
