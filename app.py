@@ -6,6 +6,7 @@ from page_pks import render_pks
 from page_ia import render_ia
 from page_riwayat import render_riwayat
 from page_arsip import render_arsip
+from page_dashboard import render_dashboard
 
 st.set_page_config(page_title="Sistem Naskah Hukum Unmul", layout="wide")
 
@@ -34,9 +35,9 @@ st.sidebar.title("Sistem Naskah Kerja Sama")
 st.sidebar.markdown("Universitas Mulawarman")
 
 if 'menu_aktif' not in st.session_state:
-    st.session_state.menu_aktif = "📝 Modul PKS (Induk)"
+    st.session_state.menu_aktif = "📈 Modul Dashboard"
 
-menu_options = ["📝 Modul PKS (Induk)", "⚙️ Modul IA (Turunan)", "📂 Riwayat & Database", "🗄️ Arsip Otomatis"]
+menu_options = ["📈 Modul Dashboard", "📝 Modul PKS (Induk)", "⚙️ Modul IA (Turunan)", "📂 Riwayat & Database", "🗄️ Arsip Otomatis"]
 current_idx = menu_options.index(st.session_state.menu_aktif)
 
 menu = st.sidebar.radio("Navigasi Modul:", menu_options, index=current_idx)
