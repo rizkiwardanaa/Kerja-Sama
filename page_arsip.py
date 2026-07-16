@@ -13,23 +13,50 @@ from datetime import datetime
 from fpdf import FPDF
 from db_config import get_db_connection
 
-API_KEY = st.secrets.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
+# Library Google Drive API
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
+API_KEY = st.secrets.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
+FOLDER_ID = st.secrets.get("DRIVE_FOLDER_ID", "")
+
+# --- FUNGSI UPLOAD GOOGLE DRIVE ---
+def upload_to_drive(file_bytes, file_name):
+    """Mengunggah file ke Google Drive menggunakan Service Account dan mengembalikan URL."""
+    try:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=['https://www.googleapis.com/auth/drive.file']
+        )
+        service = build('drive', 'v3', credentials=creds)
+        
+        file_metadata = {'name': file_name, 'parents': [FOLDER_ID]}
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/pdf', resumable=True)
+        
+        # Eksekusi unggah file
+        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+        file_id = file.get('id')
+        
+        # Buka izin agar siapapun yang punya link bisa melihat/mengunduh
+        service.permissions().create(
+            fileId=file_id,
+            body={'type': 'anyone', 'role': 'reader'}
+        ).execute()
+        
+        return file.get('webViewLink')
+    except Exception as e:
+        raise Exception(f"Gagal mengunggah ke Google Drive: {str(e)}")
+
+# --- FUNGSI AI GEMINI (Tetap Sama) ---
 def get_available_models(api_key):
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            valid_models = [
-                m['name'] for m in data.get('models', []) 
-                if 'generateContent' in m.get('supportedGenerationMethods', [])
-                and 'gemini' in m['name']
-            ]
-            valid_models.sort(
-                key=lambda x: ('1.5-flash' in x, '1.5-pro' in x, 'latest' in x), 
-                reverse=True
-            )
+            valid_models = [m['name'] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', []) and 'gemini' in m['name']]
+            valid_models.sort(key=lambda x: ('1.5-flash' in x, '1.5-pro' in x, 'latest' in x), reverse=True)
             return valid_models
         return []
     except Exception:
@@ -38,37 +65,28 @@ def get_available_models(api_key):
 def panggil_gemini_api(file_bytes, api_key):
     headers = {'Content-Type': 'application/json'}
     b64_file = base64.b64encode(file_bytes).decode('utf-8')
-    
-    # PROMPT DIPERBARUI: Kecerdasan ekstraksi durasi, pemisahan nomor, dan format tanggal RI
     payload = {
         "contents": [{
             "parts": [
                 {
                     "text": """
-                    Baca dokumen ini dengan sangat teliti. Ekstrak informasi berikut dan berikan HANYA dalam format JSON murni.
-                    Gunakan pedoman struktur JSON ini secara ketat:
+                    Baca dokumen ini dengan teliti. Ekstrak informasi berikut dan berikan HANYA format JSON murni.
                     {
                         "jenis_dokumen": "Tulis 'PKS' atau 'IA'",
-                        "nomor_unmul": "Cari nomor dokumen pihak Universitas Mulawarman (wajib mengandung 'UN17'). Jika tidak ada, tulis 'Tidak Ada'",
-                        "nomor_mitra": "Cari nomor surat dari pihak mitra. Jika tidak ada, tulis 'Tidak Ada'",
-                        "nama_mitra": "Tuliskan nama instansi mitra secara spesifik (misal: SDN 020 TANJUNG REDEB KABUPATEN BERAU)",
-                        "tanggal_mulai": "Ekstrak tanggal penandatanganan dokumen dan WAJIB diformat ke kalender Indonesia 'DD Bulan YYYY' (Contoh: 04 April 2026).",
-                        "tanggal_selesai": "Ekstrak tanggal berakhir dan WAJIB format kalender Indonesia 'DD Bulan YYYY'. Jika dokumen tidak menyebutkan tanggal pasti tetapi menuliskan durasi (misal 'berlaku selama 3 tahun' atau '5 tahun'), hitung otomatis tahun berakhirnya berdasarkan tanggal mulai. Jika tetap tidak diketahui, tulis 'Tidak disebutkan'.",
-                        "prodi": "Cari teks Program Studi pihak kampus. Jika tidak ditemukan, tulis 'Tidak disebutkan'",
-                        "koor_prodi": "Cari nama pejabat yang mewakili Prodi tersebut (Khusus IA). Jika PKS atau tidak ada, tulis 'Tidak disebutkan'"
+                        "nomor_unmul": "Nomor pihak UNMUL (mengandung 'UN17'). Jika tidak ada tulis 'Tidak Ada'",
+                        "nomor_mitra": "Nomor pihak mitra. Jika tidak ada tulis 'Tidak Ada'",
+                        "nama_mitra": "Nama instansi mitra spesifik",
+                        "tanggal_mulai": "Wajib kalender Indonesia 'DD Bulan YYYY'",
+                        "tanggal_selesai": "Wajib kalender Indonesia 'DD Bulan YYYY'. Hitung tahunnya jika hanya disebut durasi. Atau 'Tidak disebutkan'",
+                        "prodi": "Program Studi kampus. Atau 'Tidak disebutkan'",
+                        "koor_prodi": "Nama pejabat perwakilan Prodi (Khusus IA). Atau 'Tidak disebutkan'"
                     }
                     """
                 },
-                {
-                    "inline_data": {
-                        "mime_type": "application/pdf", 
-                        "data": b64_file
-                    }
-                }
+                {"inline_data": {"mime_type": "application/pdf", "data": b64_file}}
             ]
         }]
     }
-    
     available_models = get_available_models(api_key)
     if not available_models: available_models = ['models/gemini-1.5-flash-latest']
         
@@ -77,42 +95,26 @@ def panggil_gemini_api(file_bytes, api_key):
         url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}"
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=60)
-            if response.status_code == 200:
-                return response.json()
+            if response.status_code == 200: return response.json()
             if response.status_code in [404, 429, 503]:
                 last_error_msg = f"Model {model_name} dilewati (Kode {response.status_code})"
                 continue 
-            if response.status_code == 400:
-                raise Exception(f"Permintaan ditolak: {response.text}")
-        except requests.exceptions.RequestException as e:
+            if response.status_code == 400: raise Exception(f"Ditolak: {response.text}")
+        except requests.exceptions.RequestException:
             last_error_msg = f"Koneksi ke {model_name} terputus."
             continue
-            
     raise Exception(f"Gagal memproses AI. Error terakhir: {last_error_msg}")
 
-
 def render_arsip():
-    # --- MIGRASI DATABASE OTOMATIS (Tanpa menghapus data lama) ---
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("ALTER TABLE arsip_dokumen ADD COLUMN nomor_mitra VARCHAR(255)")
-        conn.commit()
-    except Exception:
-        conn.rollback() # Kolom sudah ada
-    finally:
-        if 'cur' in locals(): cur.close()
-        if 'conn' in locals(): conn.close()
-
     st.title("🗄️ Arsip & Ekstraksi Dokumen Otomatis")
-    st.write("Unggah file PDF PKS atau IA. Sistem akan memisahkan Nomor Dokumen, mengkalkulasi Masa Berlaku, dan menetapkan Prodi berdasarkan tahun.")
+    st.write("Sistem ini didukung Google Drive terintegrasi. Dokumen fisik disimpan di awan, server tetap ringan.")
 
     # --- 1. FITUR UPLOAD MASSAL ---
-    uploaded_files = st.file_uploader("Unggah Dokumen (Bisa lebih dari 1 file)", type=["pdf"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Unggah Dokumen (Otomatis masuk Drive)", type=["pdf"], accept_multiple_files=True)
     
     if st.button("Proses & Ekstrak Data", type="primary") and uploaded_files:
-        if not API_KEY:
-            st.error("API Key belum dikonfigurasi.")
+        if not API_KEY or not FOLDER_ID:
+            st.error("API Key atau Folder ID belum dikonfigurasi di secrets.")
             st.stop()
             
         conn = get_db_connection()
@@ -132,14 +134,15 @@ def render_arsip():
                 progress_bar.progress((i + 1) / total_files)
                 continue
                 
-            with st.status(f"Mengekstrak data '{file.name}'...", expanded=False) as status_ui:
+            with st.status(f"Memproses '{file.name}'...", expanded=False) as status_ui:
                 try:
+                    # Langkah 1: Ekstrak Teks dengan AI
+                    st.write("Menganalisis dokumen dengan AI...")
                     result_json = panggil_gemini_api(file_bytes, API_KEY)
                     res_text = result_json['candidates'][0]['content']['parts'][0]['text']
-                    clean_json = res_text.replace('```json', '').replace('```', '').strip()
-                    data_ekstrak = json.loads(clean_json)
+                    data_ekstrak = json.loads(res_text.replace('```json', '').replace('```', '').strip())
                     
-                    # LOGIKA OTOMATISASI PRODI UNTUK PKS
+                    # Logika Prodi PKS
                     jenis_dokumen = data_ekstrak.get('jenis_dokumen', 'Tidak disebutkan')
                     tgl_mulai = data_ekstrak.get('tanggal_mulai', 'Tidak disebutkan')
                     prodi = data_ekstrak.get('prodi', 'Tidak disebutkan')
@@ -148,16 +151,21 @@ def render_arsip():
                         year_match = re.search(r'\d{4}', tgl_mulai)
                         if year_match:
                             tahun = int(year_match.group(0))
-                            if tahun < 2025:
-                                prodi = "Sastra Indonesia, Sastra Inggris, Etnomusikologi"
-                            elif tahun == 2025:
-                                prodi = "Sastra Indonesia, Sastra Inggris, Etnomusikologi, Tari"
-                            else:
-                                prodi = "Sastra Indonesia, Sastra Inggris, Etnomusikologi, Tari, S2 Kajian Budaya"
+                            if tahun < 2025: prodi = "Sastra Indonesia, Sastra Inggris, Etnomusikologi"
+                            elif tahun == 2025: prodi = "Sastra Indonesia, Sastra Inggris, Etnomusikologi, Tari"
+                            else: prodi = "Sastra Indonesia, Sastra Inggris, Etnomusikologi, Tari, S2 Kajian Budaya"
 
+                    # Langkah 2: Unggah fisik ke Google Drive
+                    st.write("Mengamankan dokumen ke Google Drive...")
+                    bersih_mitra = re.sub(r'[^a-zA-Z0-9]', '_', data_ekstrak.get('nama_mitra', 'Mitra'))
+                    drive_file_name = f"{jenis_dokumen}_{bersih_mitra}.pdf"
+                    drive_url = upload_to_drive(file_bytes, drive_file_name)
+
+                    # Langkah 3: Simpan URL dan Meta Data ke Database Neon (file_pdf dibiarkan NULL untuk hemat ruang)
+                    st.write("Menyimpan tautan ke Database...")
                     cur.execute("""
                         INSERT INTO arsip_dokumen 
-                        (file_hash, jenis_dokumen, nomor_dokumen, nomor_mitra, nama_mitra, tgl_mulai, tgl_selesai, prodi, koor_prodi, file_pdf, tanggal_diunggah) 
+                        (file_hash, jenis_dokumen, nomor_dokumen, nomor_mitra, nama_mitra, tgl_mulai, tgl_selesai, prodi, koor_prodi, file_url, tanggal_diunggah) 
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         file_hash, 
@@ -169,7 +177,7 @@ def render_arsip():
                         data_ekstrak.get('tanggal_selesai', 'Tidak disebutkan'),
                         prodi,
                         data_ekstrak.get('koor_prodi', 'Tidak disebutkan'),
-                        psycopg2.Binary(file_bytes),
+                        drive_url, # Simpan Tautan Drive
                         datetime.now()
                     ))
                     conn.commit()
@@ -192,7 +200,7 @@ def render_arsip():
     
     conn = get_db_connection()
     query_hirarki = """
-        SELECT id, jenis_dokumen, nomor_dokumen, nomor_mitra, nama_mitra, prodi, koor_prodi, tgl_mulai, tgl_selesai 
+        SELECT id, jenis_dokumen, nomor_dokumen, nomor_mitra, nama_mitra, prodi, koor_prodi, tgl_mulai, tgl_selesai, file_url 
         FROM arsip_dokumen 
         ORDER BY nama_mitra ASC, 
                  CASE WHEN jenis_dokumen ILIKE '%PKS%' THEN 1 ELSE 2 END ASC, 
@@ -203,7 +211,7 @@ def render_arsip():
     
     if not df_arsip.empty:
         
-        # --- FITUR HAPUS MASAL (SANGAT RINGAN) ---
+        # --- FITUR HAPUS MASAL ---
         st.markdown("##### 🗑️ Hapus Dokumen Massal")
         delete_options = { f"{row['jenis_dokumen']} - {row['nama_mitra']} (ID: {row['id']})": row['id'] for _, row in df_arsip.iterrows() }
         selected_to_delete = st.multiselect("Pilih satu atau lebih dokumen untuk dihapus:", options=list(delete_options.keys()))
@@ -254,8 +262,9 @@ def render_arsip():
         with col_btn2:
             output_excel = io.BytesIO()
             with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
+                # Memastikan URL Drive juga terkespor ke Excel untuk kemudahan akses
                 df_export = df_arsip.drop(columns=['id'])
-                df_export.columns = ['Jenis Dokumen', 'Nomor UNMUL', 'Nomor Mitra', 'Nama Mitra', 'Program Studi', 'Koor. Prodi', 'Tanggal Mulai', 'Tanggal Selesai']
+                df_export.columns = ['Jenis Dokumen', 'Nomor UNMUL', 'Nomor Mitra', 'Nama Mitra', 'Program Studi', 'Koor. Prodi', 'Tanggal Mulai', 'Tanggal Selesai', 'Link Berkas']
                 df_export.to_excel(writer, index=False, sheet_name='Arsip_Kerja_Sama')
             excel_data = output_excel.getvalue()
             st.download_button(label="Unduh Rekap (Excel)", data=excel_data, file_name="Rekap_Arsip_Kerjasama.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -268,10 +277,9 @@ def render_arsip():
         h2.markdown("**Nomor Dokumen**")
         h3.markdown("**Mitra & Informasi Prodi**")
         h4.markdown("**Masa Berlaku**")
-        h5.markdown("**Aksi**")
+        h5.markdown("**Akses File**")
         st.divider()
         
-        cur = conn.cursor()
         prev_mitra = ""
         
         for _, row in df_arsip.iterrows():
@@ -292,22 +300,16 @@ def render_arsip():
             c4.write(f"**Mulai:** {row['tgl_mulai']}\n\n**Selesai:** {row['tgl_selesai']}")
             
             with c5:
-                cur.execute("SELECT file_pdf FROM arsip_dokumen WHERE id = %s", (row['id'],))
-                raw_data = cur.fetchone()[0]
-                pdf_data = bytes(raw_data) if raw_data else b""
-                
-                st.download_button(
-                    label="⬇️ Unduh File",
-                    data=pdf_data,
-                    file_name=f"{row['jenis_dokumen']}_{row['nama_mitra'][:15]}.pdf",
-                    mime="application/pdf",
-                    key=f"dl_real_{row['id']}"
-                )
+                # Tombol sekarang berubah menjadi Link yang langsung mengarah ke Google Drive
+                link_drive = row.get('file_url', '')
+                if link_drive and link_drive != "Tidak disebutkan":
+                    st.link_button("🌐 Buka Dokumen", link_drive)
+                else:
+                    st.info("File lokal lama") # Fallback untuk file lama yang masih pakai BYTEA
                         
             st.divider()
             prev_mitra = row['nama_mitra']
             
-        cur.close()
     else:
         st.info("Database arsip masih kosong. Silakan unggah dokumen di atas.")
         
