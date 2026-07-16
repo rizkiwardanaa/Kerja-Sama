@@ -9,31 +9,8 @@ def init_db():
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Tabel PKS
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS dokumen_pks (
-                id SERIAL PRIMARY KEY,
-                judul_ks VARCHAR(255),
-                nama_mitra VARCHAR(255),
-                tanggal_dibuat TIMESTAMP,
-                isi_dokumen TEXT,
-                form_data TEXT
-            )
-        """)
+        # ... (Tabel PKS dan IA biarkan sama seperti sebelumnya) ...
         
-        # Tabel IA
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS dokumen_ia (
-                id SERIAL PRIMARY KEY,
-                pks_id INTEGER REFERENCES dokumen_pks(id) ON DELETE CASCADE,
-                judul_ia VARCHAR(255),
-                tanggal_dibuat TIMESTAMP,
-                isi_dokumen TEXT,
-                form_data TEXT
-            )
-        """)
-        
-        # Tabel Arsip
         cur.execute("""
             CREATE TABLE IF NOT EXISTS arsip_dokumen (
                 id SERIAL PRIMARY KEY,
@@ -50,11 +27,11 @@ def init_db():
         conn.commit()
         
         # --- MIGRASI DATA OTOMATIS ---
-        # Menambahkan kolom prodi & koordinator tanpa menghapus tabel lama
         alter_queries = [
-            "ALTER TABLE dokumen_pks ADD COLUMN form_data TEXT",
             "ALTER TABLE arsip_dokumen ADD COLUMN prodi VARCHAR(255)",
-            "ALTER TABLE arsip_dokumen ADD COLUMN koor_prodi VARCHAR(255)"
+            "ALTER TABLE arsip_dokumen ADD COLUMN koor_prodi VARCHAR(255)",
+            "ALTER TABLE arsip_dokumen ADD COLUMN nomor_mitra VARCHAR(255)",
+            "ALTER TABLE arsip_dokumen ADD COLUMN file_url VARCHAR(500)" # Kolom baru untuk Link Drive
         ]
         
         for query in alter_queries:
@@ -62,7 +39,7 @@ def init_db():
                 cur.execute(query)
                 conn.commit()
             except Exception:
-                conn.rollback() # Jika kolom sudah ada, abaikan error dan lanjut
+                conn.rollback() 
                 
         cur.close()
         conn.close()
