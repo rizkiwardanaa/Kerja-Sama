@@ -46,7 +46,9 @@ if menu != st.session_state.menu_aktif:
     st.rerun()
 
 # --- ROUTING HALAMAN ---
-if menu == "📝 Modul PKS (Induk)":
+if menu == "📈 Modul Dashboard":
+    render_dashboard()
+elif menu == "📝 Modul PKS (Induk)":
     render_pks(model)
 elif menu == "⚙️ Modul IA (Turunan)":
     render_ia(model)
